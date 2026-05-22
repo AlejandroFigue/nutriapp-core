@@ -1,0 +1,232 @@
+/* ─── Design tokens — Light ──────────────────────────────────────────────── */
+:root {
+  /* Colores primarios (verde nutrición) */
+  --color-primary:         #2E7D32;
+  --color-primary-light:   #4CAF50;
+  --color-primary-dark:    #1B5E20;
+  --color-primary-surface: #E8F5E9;
+  --color-primary-on:      #FFFFFF;
+
+  /* Acento (naranja energía) */
+  --color-accent:          #FF8F00;
+  --color-accent-light:    #FFB300;
+  --color-accent-surface:  #FFF8E1;
+
+  /* Semánticos */
+  --color-error:           #C62828;
+  --color-error-surface:   #FFEBEE;
+  --color-success:         #2E7D32;
+  --color-warning:         #E65100;
+  --color-warning-surface: #FFF3E0;
+
+  /* Superficie */
+  --color-bg:              #FAFAFA;
+  --color-surface:         #FFFFFF;
+  --color-surface-raised:  #F5F5F5;
+  --color-border:          #E0E0E0;
+  --color-divider:         #EEEEEE;
+
+  /* Texto */
+  --color-text-high:       #212121;
+  --color-text-mid:        #616161;
+  --color-text-low:        #9E9E9E;
+  --color-text-disabled:   #BDBDBD;
+
+  /* Tipografía */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --text-xs:   0.75rem;    /* 12px */
+  --text-sm:   0.875rem;   /* 14px */
+  --text-base: 1rem;       /* 16px */
+  --text-lg:   1.125rem;   /* 18px */
+  --text-xl:   1.25rem;    /* 20px */
+  --text-2xl:  1.5rem;     /* 24px */
+  --text-3xl:  1.875rem;   /* 30px */
+
+  /* Espaciado (múltiplos de 4px) */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radios */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   16px;
+  --radius-xl:   24px;
+  --radius-full: 9999px;
+
+  /* Sombras */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:  0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+  --shadow-lg:  0 10px 15px rgba(0,0,0,.08), 0 4px 6px rgba(0,0,0,.05);
+  --shadow-xl:  0 20px 25px rgba(0,0,0,.09), 0 10px 10px rgba(0,0,0,.04);
+
+  /* Transiciones */
+  --transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow:   350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index */
+  --z-base:    1;
+  --z-raised:  10;
+  --z-banner:  100;
+  --z-overlay: 150;
+  --z-modal:   200;
+  --z-toast:   300;
+}
+
+/* ─── Design tokens — Dark ───────────────────────────────────────────────── */
+.dark {
+  --color-primary:         #66BB6A;
+  --color-primary-light:   #81C784;
+  --color-primary-dark:    #388E3C;
+  --color-primary-surface: #1B2E1C;
+  --color-primary-on:      #000000;
+
+  --color-accent:          #FFB300;
+  --color-accent-light:    #FFC107;
+  --color-accent-surface:  #2E2310;
+
+  --color-error:           #EF5350;
+  --color-error-surface:   #2C1515;
+  --color-success:         #66BB6A;
+  --color-warning:         #FFA726;
+  --color-warning-surface: #2C1F0A;
+
+  --color-bg:              #121212;
+  --color-surface:         #1E1E1E;
+  --color-surface-raised:  #2A2A2A;
+  --color-border:          #333333;
+  --color-divider:         #2A2A2A;
+
+  --color-text-high:       #F5F5F5;
+  --color-text-mid:        #AAAAAA;
+  --color-text-low:        #717171;
+  --color-text-disabled:   #4A4A4A;
+
+  --shadow-sm:  0 1px 3px rgba(0,0,0,.30);
+  --shadow-md:  0 4px 6px rgba(0,0,0,.28);
+  --shadow-lg:  0 10px 15px rgba(0,0,0,.30);
+  --shadow-xl:  0 20px 25px rgba(0,0,0,.32);
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  height: 100%;
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100%;
+  min-height: 100dvh;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--color-text-high);
+  background-color: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+
+  /* Safe area para notch / dynamic island / barra de navegación de iOS */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+img, svg, video, canvas {
+  display: block;
+  max-width: 100%;
+}
+
+input, button, textarea, select {
+  font: inherit;
+  color: inherit;
+}
+
+button { cursor: pointer; border: none; background: none; }
+a { color: inherit; text-decoration: none; }
+ul, ol { list-style: none; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+
+/* ─── Utilidades globales ─────────────────────────────────────────────────── */
+
+/* Loader (Suspense fallback) */
+.loading-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  background-color: var(--color-bg);
+}
+
+.loading-screen::after {
+  content: '';
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Banner offline */
+.offline-banner {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: var(--z-banner);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4);
+  padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+  background-color: var(--color-warning);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: center;
+  user-select: none;
+}
+
+/* ─── Animaciones ─────────────────────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respeto a preferencias de accesibilidad */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
