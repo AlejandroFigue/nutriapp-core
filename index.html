@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Identidad -->
+    <title>NutriApp Profesional</title>
+    <meta name="description" content="Gestión nutricional personalizada. Registra comidas, controla macros y sigue tu progreso sin conexión." />
+    <meta name="application-name" content="NutriApp" />
+
+    <!-- PWA / Theme -->
+    <meta name="theme-color" content="#2E7D32" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- iOS Safari PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NutriApp" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167x167.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180x180.png" />
+
+    <!-- Splash screens iOS (portrait) -->
+    <link rel="apple-touch-startup-image"
+          media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+          href="/splash/iphone14.png" />
+    <link rel="apple-touch-startup-image"
+          media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
+          href="/splash/iphone14promax.png" />
+
+    <!-- Microsoft Tiles -->
+    <meta name="msapplication-TileColor" content="#2E7D32" />
+    <meta name="msapplication-TileImage" content="/icons/icon-144x144.png" />
+    <meta name="msapplication-config" content="none" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="NutriApp Profesional" />
+    <meta property="og:description" content="Gestión nutricional personalizada offline-first." />
+    <meta property="og:image" content="/icons/icon-512x512.png" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    <!-- Fuente principal -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Prevención de FOUC en modo oscuro -->
+    <script>
+      (function () {
+        var stored = localStorage.getItem('nutriapp-theme');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (stored === 'dark' || (!stored && prefersDark)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <!-- Mensaje para navegadores sin JS -->
+    <noscript>
+      <div style="
+        display:flex;align-items:center;justify-content:center;
+        height:100vh;font-family:sans-serif;text-align:center;padding:2rem;
+      ">
+        <p>NutriApp requiere JavaScript para funcionar. Por favor, actívalo en tu navegador.</p>
+      </div>
+    </noscript>
+
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
