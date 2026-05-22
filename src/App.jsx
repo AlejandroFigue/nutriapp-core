@@ -7,47 +7,69 @@
  *   ├──────────────────────────────────────┤
  *   │            <ruta activa>             │  ← .app-main   (flex-1, overflow-y: auto)
  *   ├──────────────────────────────────────┤
- *   │  Plan   Registrar  Progreso  Buscar  │  ← .app-nav    (64px)
+ *   │  Plan   Registrar  Progreso  Buscar  │  ← .app-nav    (64px) + indicador flotante
  *   └──────────────────────────────────────┘
  *
  * Incluye:
  *   - Banner de nueva versión de SW disponible
  *   - OfflineBanner (conectividad) — reposicionado bajo el header
  *   - SyncStatus — estado reactivo del outbox
- *   - Navegación inferior con íconos SVG inline (sin librerías)
+ *   - Navegación inferior con indicador flotante elástico (CSS custom property)
+ *   - Fondos orb — gradientes radiales que derivan suavemente (GPU-only)
  */
 import { lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
+import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
 import OfflineBanner from '@/components/OfflineBanner'
 import SyncStatus    from '@/components/SyncStatus'
 import { useUIStore } from '@/store/useUIStore'
 
 // ─── Rutas (lazy) ─────────────────────────────────────────────────────────────
 
-const Plan      = lazy(() => import('@/routes/Plan'))
-const Registrar = lazy(() => import('@/routes/Registrar'))
-const Progreso  = lazy(() => import('@/routes/Progreso'))
-const Buscar    = lazy(() => import('@/routes/Buscar'))
+const Plan            = lazy(() => import('@/routes/Plan'))
+const Registrar       = lazy(() => import('@/routes/Registrar'))
+const Progreso        = lazy(() => import('@/routes/Progreso'))
+const Buscar          = lazy(() => import('@/routes/Buscar'))
+const ExportarReporte = lazy(() => import('@/components/ExportarReporte'))
 
 // ─── Navegación inferior ──────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
-  { to: '/plan',      label: 'Plan',      Icon: IconPlan      },
-  { to: '/registrar', label: 'Registrar', Icon: IconPlus      },
-  { to: '/progreso',  label: 'Progreso',  Icon: IconChart     },
-  { to: '/buscar',    label: 'Buscar',    Icon: IconSearch    },
+  { to: '/plan',      label: 'Plan',      Icon: IconPlan  },
+  { to: '/registrar', label: 'Registrar', Icon: IconPlus  },
+  { to: '/progreso',  label: 'Progreso',  Icon: IconChart },
+  { to: '/buscar',    label: 'Buscar',    Icon: IconSearch },
 ]
+
+/**
+ * Índice de la pestaña activa por ruta.
+ * /exportar se solapa sobre Progreso (índice 2) — la burbuja no se mueve.
+ */
+const ROUTE_INDEX = {
+  '/plan':      0,
+  '/registrar': 1,
+  '/progreso':  2,
+  '/buscar':    3,
+  '/exportar':  2,
+}
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const theme              = useUIStore((s) => s.theme)
-  const toggleTheme        = useUIStore((s) => s.toggleTheme)
-  const swUpdateAvailable  = useUIStore((s) => s.swUpdateAvailable)
+  const theme               = useUIStore((s) => s.theme)
+  const toggleTheme         = useUIStore((s) => s.toggleTheme)
+  const swUpdateAvailable   = useUIStore((s) => s.swUpdateAvailable)
   const aplicarActualizacion = useUIStore((s) => s.aplicarActualizacion)
+
+  const { pathname } = useLocation()
+  const activeIndex  = ROUTE_INDEX[pathname] ?? 0
 
   return (
     <div className="app-shell">
+
+      {/* ── Fondos orb — gradientes que derivan lentamente (z-index: -1) ── */}
+      <div className="bg-orb bg-orb--1" aria-hidden="true" />
+      <div className="bg-orb bg-orb--2" aria-hidden="true" />
+      <div className="bg-orb bg-orb--3" aria-hidden="true" />
 
       {/* ── Header ── */}
       <header className="app-header">
@@ -106,13 +128,21 @@ export default function App() {
             <Route path="/registrar" element={<Registrar />} />
             <Route path="/progreso"  element={<Progreso />} />
             <Route path="/buscar"    element={<Buscar />} />
+            <Route path="/exportar"  element={<ExportarReporte />} />
             <Route path="*"          element={<Navigate to="/plan" replace />} />
           </Routes>
         </Suspense>
       </main>
 
-      {/* ── Navegación inferior ── */}
-      <nav className="app-nav" aria-label="Navegación principal">
+      {/* ── Navegación inferior con indicador flotante ── */}
+      <nav
+        className="app-nav"
+        style={{ '--active-tab': activeIndex }}
+        aria-label="Navegación principal"
+      >
+        {/* Burbuja flotante — se mueve con translateX elástico */}
+        <div className="nav-indicator" aria-hidden="true" />
+
         {NAV_ITEMS.map(({ to, label, Icon }) => (
           <NavLink
             key={to}
