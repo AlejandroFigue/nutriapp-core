@@ -1,10 +1,20 @@
+/**
+ * main.jsx — punto de entrada de la aplicación.
+ *
+ * Responsabilidades:
+ *   1. Configurar TanStack Query con estrategia offline-first
+ *   2. Registrar el Service Worker (solo en producción)
+ *   3. Puente SW → stores (FLUSH_OUTBOX, SKIP_WAITING)
+ *   4. Inicializar el diario del día activo antes del primer render
+ *   5. Renderizar el árbol React
+ */
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { useNutricionStore } from '@/store/useNutricionStore'
-import { useUIStore } from '@/store/useUIStore'
+import { useUIStore }        from '@/store/useUIStore'
 import './index.css'
 
 // ─── TanStack Query ───────────────────────────────────────────────────────────
@@ -12,10 +22,10 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5,         // 5 min: datos frescos sin refetch
-      gcTime: 1000 * 60 * 60 * 24,      // 24 h: mantener en memoria aunque no esté montado
-      retry: (failureCount) => navigator.onLine && failureCount < 2,
-      networkMode: 'offlineFirst',       // ejecutar aunque no haya conexión
+      staleTime:   1000 * 60 * 5,         // 5 min: datos frescos sin refetch
+      gcTime:      1000 * 60 * 60 * 24,   // 24 h: mantener en GC aunque no esté montado
+      retry:       (n) => navigator.onLine && n < 2,
+      networkMode: 'offlineFirst',
     },
     mutations: {
       networkMode: 'offlineFirst',
@@ -24,23 +34,21 @@ const queryClient = new QueryClient({
 })
 
 // ─── Service Worker ───────────────────────────────────────────────────────────
-// Solo en producción: en dev el SW cachearía assets sin hash y rompería HMR.
-// workbox-window mejora el ciclo de vida del SW con manejo de actualizaciones.
+// Solo en producción; en desarrollo el SW cachearía assets sin hash y rompería HMR.
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   import('workbox-window').then(({ Workbox }) => {
     const wb = new Workbox('/sw.js')
 
-    // Nuevo SW instalado esperando activación → notificar al usuario
+    // Nuevo SW instalado y esperando activación → notificar al usuario
     wb.addEventListener('waiting', () => {
       useUIStore.getState().setSwUpdateAvailable(true)
     })
 
-    // Puente de mensajes SW → stores:
-    // El SW no puede acceder a Dexie directamente, por lo que delega
-    // el flush de outbox a la app mediante postMessage.
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      if (event.data?.type === 'FLUSH_OUTBOX') {
+    // Puente de mensajes SW → stores.
+    // El SW no puede acceder a Dexie directamente; delega el flush a la app.
+    navigator.serviceWorker.addEventListener('message', ({ data }) => {
+      if (data?.type === 'FLUSH_OUTBOX') {
         useNutricionStore.getState().flushOutbox()
       }
     })
@@ -51,6 +59,12 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   })
 }
 
+// ─── Inicialización temprana de datos ────────────────────────────────────────
+// Cargamos el diario del día activo antes del primer render para que las rutas
+// que dependen de `registrosDia` no muestren un estado vacío en el montaje.
+
+useNutricionStore.getState().cargarDiario()
+
 // ─── Render ───────────────────────────────────────────────────────────────────
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -60,5 +74,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <App />
       </BrowserRouter>
     </QueryClientProvider>
-  </React.StrictMode>
+  </React.StrictMode>,
 )

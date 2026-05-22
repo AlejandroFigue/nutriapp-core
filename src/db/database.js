@@ -48,6 +48,15 @@ db.version(1).stores({
   outbox: '++id, estado, entidad, entidadId, timestamp',
 })
 
+/**
+ * v2 — agrega la tabla de pacientes (profesional gestiona múltiples pacientes).
+ * Solo se declaran tablas nuevas/modificadas; el resto persiste de v1.
+ */
+db.version(2).stores({
+  pacientes:
+    '++id, nombre, apellido, email, sincronizado, creadoEn',
+})
+
 // Seed inicial en primera instalación
 db.on('populate', async (tx) => {
   await tx.table('usuario').add({
