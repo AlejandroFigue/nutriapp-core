@@ -1,22 +1,31 @@
 /**
- * HistoriaClinica.jsx — Panel de control clínico premium.
+ * HistoriaClinica.jsx — Ficha clínica premium con evolución de paciente.
  *
  * Arquitectura visual:
- *   · MetricCard   — efecto 3D tilt con CSS custom props (--rx, --ry)
- *                    calculados por mouse/touch sin requestAnimationFrame ni libs
- *   · ImcGauge     — SVG semicircular con aguja cromática animada
- *                    Matemática: ángulos [180°, 360°] CW mapean IMC [10, 45]
- *                    Transición: cubic-bezier spring (0.34, 1.56, 0.64, 1)
- *   · Timeline     — IntersectionObserver + clase CSS → translate3d(0)
- *                    Delay escalonado para efecto cinemático sin JS de scroll
+ *   · MetricCard   — efecto 3D tilt (CSS custom props --rx / --ry)
+ *                    perspective(1000px) + transition: transform 0.4s ease
+ *                    sin libs externas, GPU-only vía will-change: transform
  *
- * GPU:
- *   will-change: transform   solo en elementos que se animan (cards + needle + tl-items)
- *   backface-visibility: hidden  elimina overhead de repintado del reverso
- *   translateZ(0)  promueve la tarjeta a capa de composición propia
+ *   · ImcGauge     — SVG semicircular con arcos de color por zona OMS
+ *                    Aguja: transform-origin en el centro del pivote,
+ *                    spring cubic-bezier(0.34, 1.56, 0.64, 1)
  *
- * Persistencia: tabla `historias` (Dexie v3) + queueSyncTask (outbox at-least-once)
+ *   · ImcMeter     — Barra cromática horizontal inline (form)
+ *                    Feedback en tiempo real: indicador flota sobre gradiente
+ *                    transition: left 0.4s ease
+ *
+ *   · Timeline     — IntersectionObserver → clase CSS → translate3d(0,0,0)
+ *                    Delay escalonado — efecto cinemático sin JS de scroll
+ *
+ * GPU-budget:
+ *   will-change: transform   solo en .mc, .gauge-needle, .tl-item
+ *   backface-visibility: hidden   en .mc — evita repintado del reverso
+ *   translateZ(0)   promueve tarjeta a capa de composición propia
+ *
+ * Persistencia:
+ *   Dexie tabla `historias` (v2) + queueSyncTask — patrón outbox at-least-once
  */
+
 import {
   useState,
   useEffect,
@@ -29,75 +38,116 @@ import { liveQuery } from 'dexie'
 import { db, genId, queueSyncTask } from '@/db/database'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ESTILOS — inyectados una vez; componente auto-contenido (sin CSS Module)
+// ESTILOS — inyectados una sola vez; componente autocontenido (sin CSS Module)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const COMPONENT_CSS = `
-/* ── Wrapper principal ───────────────────────────────────────────────── */
+
+/* ══ Wrapper principal ════════════════════════════════════════════════════════ */
 .hc {
-  max-width: 680px;
+  max-width: 700px;
   margin-inline: auto;
   padding: var(--space-4);
-  padding-bottom: var(--space-10);
+  padding-bottom: var(--space-12);
+  animation: fade-in var(--transition-normal) both;
+}
+
+/* ══ Encabezado ══════════════════════════════════════════════════════════════ */
+.hc-header {
+  margin-bottom: var(--space-6);
+}
+.hc-title {
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  letter-spacing: -.025em;
+  color: var(--color-text-high);
+  line-height: 1.1;
+}
+.hc-subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-mid);
+  margin-top: var(--space-1);
+  line-height: 1.5;
 }
 .hc-section-title {
   font-size: var(--text-xs);
-  font-weight: 700;
-  letter-spacing: .08em;
+  font-weight: 800;
+  letter-spacing: .09em;
   text-transform: uppercase;
   color: var(--color-primary);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.hc-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-divider);
 }
 
-/* ── MetricCard — dashboard 3D ───────────────────────────────────────── */
+/* ══ Dashboard 3D ════════════════════════════════════════════════════════════ */
 .hc-dashboard {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-4);
   margin-bottom: var(--space-6);
 }
-@media (max-width: 520px) {
-  .hc-dashboard { grid-template-columns: 1fr; }
+@media (max-width: 560px) {
+  .hc-dashboard { grid-template-columns: 1fr; gap: var(--space-3); }
 }
 
+/* ── MetricCard 3D ─────────────────────────────────────────────────────────── */
 .mc {
   position: relative;
-  border-radius: var(--radius-lg);
-  padding: var(--space-4);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5) var(--space-4) var(--space-4);
   cursor: default;
   user-select: none;
   overflow: hidden;
-  /* GPU: promoted composite layer */
+
+  /* GPU: layer de composición propia — sin layout, sin paint */
   will-change: transform;
   backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+
+  /* Inclinación 3D desde CSS custom properties actualizadas por JS */
   transform:
     perspective(1000px)
     rotateX(var(--rx, 0deg))
     rotateY(var(--ry, 0deg))
     translateZ(0);
-  transition: transform 0.5s ease, box-shadow 0.5s ease;
-  box-shadow: var(--shadow-md);
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+  box-shadow:
+    0 8px 24px rgba(0,0,0,.14),
+    0 2px 8px  rgba(0,0,0,.10);
 }
-.mc:hover { box-shadow: 0 20px 40px rgba(0,0,0,.22); }
+.mc:hover {
+  box-shadow:
+    0 22px 48px rgba(0,0,0,.22),
+    0 6px 18px  rgba(0,0,0,.14);
+}
 
-/* Texturas de fondo por variante */
+/* Variantes cromáticas */
 .mc--peso {
-  background: linear-gradient(140deg, #1B5E20 0%, #2E7D32 55%, #43A047 100%);
+  background: linear-gradient(145deg, #1B5E20 0%, #2E7D32 55%, #43A047 100%);
 }
 .mc--grasa {
-  background: linear-gradient(140deg, #BF360C 0%, #E64A19 55%, #FF7043 100%);
+  background: linear-gradient(145deg, #BF360C 0%, #E64A19 55%, #FF7043 100%);
 }
 .mc--musculo {
-  background: linear-gradient(140deg, #1A237E 0%, #283593 55%, #3F51B5 100%);
+  background: linear-gradient(145deg, #1A237E 0%, #283593 55%, #3F51B5 100%);
 }
-/* Grid sutil superpuesto — profundidad sin peso visual */
+
+/* Textura de cuadrícula sutil (profundidad sin peso) */
 .mc::before {
   content: '';
   position: absolute;
   inset: 0;
   background:
     repeating-linear-gradient(45deg, transparent 0 10px, rgba(255,255,255,.025) 10px 11px),
-    repeating-linear-gradient(-45deg, transparent 0 10px, rgba(255,255,255,.015) 10px 11px);
+    repeating-linear-gradient(-45deg, transparent 0 10px, rgba(255,255,255,.02) 10px 11px);
   pointer-events: none;
   border-radius: inherit;
 }
@@ -107,142 +157,283 @@ const COMPONENT_CSS = `
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
   border-radius: inherit;
 }
 
-/* Contenido elevado (translateZ para sensación de profundidad) */
+/* Contenido elevado (sensación de profundidad) */
 .mc__inner {
   position: relative;
-  transform: translateZ(24px);
+  transform: translateZ(20px);
   color: #fff;
 }
 .mc__icon {
-  font-size: 1.75rem;
+  font-size: 1.65rem;
   line-height: 1;
   margin-bottom: var(--space-2);
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,.3));
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,.28));
 }
 .mc__label {
-  font-size: var(--text-xs);
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: .09em;
   text-transform: uppercase;
-  opacity: .7;
+  opacity: .72;
   margin-bottom: var(--space-1);
 }
 .mc__value {
   font-size: var(--text-3xl);
   font-weight: 800;
   line-height: 1;
-  letter-spacing: -.03em;
+  letter-spacing: -.035em;
   margin-bottom: var(--space-2);
-  text-shadow: 0 2px 8px rgba(0,0,0,.2);
+  text-shadow: 0 2px 10px rgba(0,0,0,.22);
 }
 .mc__unit {
   font-size: var(--text-sm);
   font-weight: 400;
-  opacity: .65;
+  opacity: .68;
   margin-left: 3px;
   letter-spacing: 0;
 }
 .mc__trend {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-size: var(--text-xs);
   font-weight: 700;
-  padding: 3px 8px;
+  padding: 3px 9px;
   border-radius: var(--radius-full);
-  background: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.2);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
-.mc__empty { font-size: var(--text-xs); opacity: .45; }
+.mc__empty {
+  font-size: var(--text-xs);
+  opacity: .45;
+  margin-top: var(--space-1);
+}
 
-/* ── IMC Gauge ────────────────────────────────────────────────────────── */
+/* ══ IMC Gauge (SVG) ══════════════════════════════════════════════════════════ */
 .hc-gauge-section {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
-  padding: var(--space-5) var(--space-4) var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-5);
   box-shadow: var(--shadow-md);
   margin-bottom: var(--space-5);
   overflow: hidden;
+  position: relative;
+}
+/* Acento decorativo */
+.hc-gauge-section::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg,
+    #4ECDC4 0%, #2ECC71 28%, #F1C40F 52%, #E67E22 72%, #E74C3C 88%, #C0392B 100%);
 }
 .hc-gauge-wrap {
   width: 100%;
-  max-width: 300px;
+  max-width: 290px;
   margin-inline: auto;
 }
-.hc-gauge-svg { width: 100%; height: auto; overflow: visible; display: block; }
-
-/* Aguja: will-change + transition spring con rebote suave */
+.hc-gauge-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  display: block;
+}
+/* Aguja animada con spring suave */
 .gauge-needle {
   will-change: transform;
-  transform-origin: 140px 155px;
-  transition: transform .9s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: 140px 152px;
+  transition: transform .95s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .gauge-needle-shadow {
   will-change: transform;
-  transform-origin: 140px 155px;
-  transition: transform .9s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: 140px 152px;
+  transition: transform .95s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-
 .hc-imc-badge {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
-  margin-top: var(--space-1);
-  animation: fade-in .4s both;
+  margin-top: var(--space-2);
+  animation: fade-in .35s both;
 }
 .hc-imc-value {
   font-size: var(--text-3xl);
   font-weight: 800;
-  letter-spacing: -.03em;
+  letter-spacing: -.035em;
   line-height: 1;
 }
 .hc-imc-label {
   font-size: var(--text-xs);
   font-weight: 700;
-  padding: 3px 12px;
+  padding: 3px 14px;
   border-radius: var(--radius-full);
   color: #fff;
-  letter-spacing: .04em;
+  letter-spacing: .05em;
   text-transform: uppercase;
-  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  box-shadow: 0 2px 8px rgba(0,0,0,.22);
 }
 .hc-imc-empty {
   font-size: var(--text-sm);
   color: var(--color-text-low);
   text-align: center;
-  padding: var(--space-4) 0;
+  padding: var(--space-3) 0 var(--space-2);
+  font-style: italic;
 }
 
-/* ── Formulario ──────────────────────────────────────────────────────── */
+/* ══ IMC Meter — barra cromática inline ══════════════════════════════════════ */
+.hc-imc-meter {
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-divider);
+  animation: fade-in .2s both;
+}
+.hc-imc-meter__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+  gap: var(--space-2);
+}
+.hc-imc-meter__reading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.hc-imc-meter__num {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  letter-spacing: -.03em;
+  line-height: 1;
+}
+.hc-imc-meter__unit {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-low);
+}
+.hc-imc-meter__zone {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  color: #fff;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  box-shadow: 0 1px 6px rgba(0,0,0,.2);
+  white-space: nowrap;
+}
+/* Barra de gradiente */
+.hc-imc-track {
+  position: relative;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg,
+    #4ECDC4 0%,        /* bajo peso */
+    #2ECC71 22%,       /* normal inicio */
+    #2ECC71 43%,       /* normal fin */
+    #F1C40F 58%,       /* sobrepeso */
+    #E67E22 72%,       /* obesidad I */
+    #E74C3C 85%,       /* obesidad II */
+    #C0392B 100%       /* obesidad III */
+  );
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.15);
+  overflow: visible;
+}
+/* Indicador flotante sobre la barra */
+.hc-imc-thumb {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.18),
+    0 2px 8px rgba(0,0,0,.22);
+  transition: left 0.4s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+/* Tic-marks de umbrales */
+.hc-imc-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  padding-inline: 2px;
+}
+.hc-imc-tick {
+  font-size: 0.6rem;
+  color: var(--color-text-low);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* ══ Formulario ══════════════════════════════════════════════════════════════ */
 .hc-form-section {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-5) var(--space-5);
   box-shadow: var(--shadow-sm);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
+  position: relative;
+  overflow: hidden;
 }
-.hc-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.hc-form-section::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg,
+    var(--color-primary-dark),
+    var(--color-primary),
+    var(--color-primary-light));
+}
+.hc-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+}
 .hc-g2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .hc-g3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
-@media (max-width: 420px) {
-  .hc-g2, .hc-g3 { grid-template-columns: 1fr; }
+.hc-g4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); }
+@media (max-width: 540px) {
+  .hc-g2 { grid-template-columns: 1fr; }
+  .hc-g3 { grid-template-columns: 1fr 1fr; }
+  .hc-g4 { grid-template-columns: 1fr 1fr; }
 }
-.hf { display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 380px) {
+  .hc-g3, .hc-g4 { grid-template-columns: 1fr; }
+}
+
+/* Campo individual */
+.hf {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
 .hf label {
-  font-size: var(--text-xs);
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--color-text-mid);
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: .06em;
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 .hf input, .hf textarea {
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-3);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
@@ -259,70 +450,115 @@ const COMPONENT_CSS = `
 .hf input:focus, .hf textarea:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(46,125,50,.15);
+  box-shadow: 0 0 0 3px rgba(46,125,50,.14);
   background: var(--color-surface);
 }
-.hf textarea { resize: vertical; min-height: 64px; }
+.hf textarea {
+  resize: vertical;
+  min-height: 68px;
+}
+.hf input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(.4);
+  cursor: pointer;
+}
+
+/* Separador de sección */
+.hc-form-divider {
+  height: 1px;
+  background: var(--color-divider);
+  margin-block: var(--space-1);
+}
+.hc-subsection-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--color-text-low);
+  margin-bottom: var(--space-1);
+}
+
+/* Botón submit premium */
 .hc-submit {
-  align-self: flex-start;
-  padding: var(--space-3) var(--space-6);
-  background: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-7);
+  background: linear-gradient(135deg,
+    var(--color-primary-dark) 0%,
+    var(--color-primary)      50%,
+    var(--color-primary-light) 100%);
+  background-size: 200% 100%;
+  background-position: 0% center;
   color: #fff;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   font-size: var(--text-sm);
   font-weight: 700;
-  letter-spacing: .01em;
-  box-shadow: 0 4px 14px rgba(46,125,50,.35);
-  transition: opacity var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  letter-spacing: -.01em;
+  box-shadow:
+    0 4px 16px rgba(46,125,50,.38),
+    0 2px 6px  rgba(0,0,0,.12);
+  transition:
+    background-position 350ms ease,
+    transform           var(--transition-fast),
+    box-shadow          var(--transition-fast),
+    opacity             var(--transition-fast);
 }
 .hc-submit:hover:not(:disabled) {
-  opacity: .92;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(46,125,50,.4);
+  background-position: 100% center;
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 28px rgba(46,125,50,.48),
+    0 4px 12px rgba(0,0,0,.15);
 }
-.hc-submit:active:not(:disabled) { transform: translateY(0); }
-.hc-submit:disabled { opacity: .5; cursor: not-allowed; }
+.hc-submit:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.hc-submit:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none !important;
+}
 .hc-saved-notice {
   font-size: var(--text-xs);
   color: var(--color-success);
   font-weight: 600;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   animation: fade-in .2s both;
 }
 
-/* ── Timeline ────────────────────────────────────────────────────────── */
+/* ══ Timeline ════════════════════════════════════════════════════════════════ */
 .hc-timeline {
   position: relative;
   padding-left: var(--space-8);
 }
-/* Línea vertical de la timeline */
+/* Línea vertical degradada */
 .hc-timeline::before {
   content: '';
   position: absolute;
-  left: 11px;
-  top: 10px;
-  bottom: 10px;
+  left: 10px;
+  top: 12px;
+  bottom: 12px;
   width: 2px;
   background: linear-gradient(
     to bottom,
-    var(--color-primary-light),
-    var(--color-divider) 85%,
-    transparent
+    var(--color-primary-light) 0%,
+    var(--color-primary)       30%,
+    var(--color-divider)       80%,
+    transparent                100%
   );
   border-radius: 1px;
 }
 
-/* Item: arranca invisible y abajo; entra con translate3d + opacity */
+/* Item: invisible y abajo → visible con IntersectionObserver */
 .tl-item {
   position: relative;
   margin-bottom: var(--space-5);
   opacity: 0;
-  transform: translate3d(0, 28px, 0);
-  transition:
-    opacity  .5s ease,
-    transform .5s ease;
+  transform: translate3d(0, 24px, 0);
+  transition: opacity .45s ease, transform .45s ease;
   will-change: transform, opacity;
 }
 .tl-item--visible {
@@ -333,35 +569,37 @@ const COMPONENT_CSS = `
 /* Punto en la línea */
 .tl-dot {
   position: absolute;
-  left: calc(-1 * var(--space-8) + 5px);
-  top: 16px;
-  width: 13px;
-  height: 13px;
+  left: calc(-1 * var(--space-8) + 4px);
+  top: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--color-primary);
   border: 2.5px solid var(--color-bg);
-  box-shadow: 0 0 0 2px var(--color-primary);
+  box-shadow: 0 0 0 2.5px var(--color-primary);
   z-index: 1;
-  transition: background .3s, box-shadow .3s;
+  transition: background .3s ease, box-shadow .3s ease;
 }
 
 /* Tarjeta de la timeline */
 .tl-card {
   background: var(--color-surface);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
   border-left: 3px solid var(--color-primary-light);
+  padding: var(--space-4) var(--space-4) var(--space-3);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+  transition:
+    box-shadow var(--transition-fast),
+    transform  var(--transition-fast);
 }
 .tl-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateX(2px);
+  transform: translateX(3px);
 }
 .tl-card__header {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
+  justify-content: space-between;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   flex-wrap: wrap;
@@ -371,19 +609,20 @@ const COMPONENT_CSS = `
   font-weight: 700;
   color: var(--color-primary);
   text-transform: capitalize;
+  line-height: 1.3;
 }
 .tl-imc-badge {
-  font-size: var(--text-xs);
+  font-size: 0.7rem;
   font-weight: 700;
-  padding: 2px 9px;
+  padding: 2px 10px;
   border-radius: var(--radius-full);
   color: #fff;
   white-space: nowrap;
-  box-shadow: 0 1px 4px rgba(0,0,0,.2);
+  box-shadow: 0 1px 5px rgba(0,0,0,.22);
 }
 .tl-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
@@ -392,13 +631,19 @@ const COMPONENT_CSS = `
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
-.tl-metric__val { font-size: var(--text-base); font-weight: 700; line-height: 1.2; }
+.tl-metric__val {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--color-text-high);
+  font-variant-numeric: tabular-nums;
+}
 .tl-metric__lbl {
   font-size: .6rem;
   color: var(--color-text-low);
   text-transform: uppercase;
-  letter-spacing: .05em;
-  margin-top: 1px;
+  letter-spacing: .06em;
+  margin-top: 2px;
 }
 .tl-card__notas {
   font-size: var(--text-sm);
@@ -407,6 +652,7 @@ const COMPONENT_CSS = `
   margin-top: var(--space-2);
   padding-top: var(--space-2);
   border-top: 1px solid var(--color-divider);
+  line-height: 1.55;
 }
 .tl-sync {
   font-size: var(--text-xs);
@@ -418,17 +664,32 @@ const COMPONENT_CSS = `
 }
 .tl-empty {
   text-align: center;
-  padding: var(--space-10) 0;
+  padding: var(--space-12) 0;
+  color: var(--color-text-low);
+  animation: fade-in var(--transition-slow) both;
+}
+.tl-empty__icon {
+  font-size: 2.8rem;
+  margin-bottom: var(--space-3);
+  filter: grayscale(.3);
+}
+.tl-empty__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text-mid);
+  margin-bottom: var(--space-1);
+}
+.tl-empty__hint {
+  font-size: var(--text-sm);
   color: var(--color-text-low);
 }
-.tl-empty__icon { font-size: 2.5rem; margin-bottom: var(--space-3); }
 `
 
 function injectStyles() {
   if (typeof document === 'undefined') return
-  if (document.getElementById('hc-styles')) return
+  if (document.getElementById('hc-styles-v3')) return
   const el = document.createElement('style')
-  el.id = 'hc-styles'
+  el.id = 'hc-styles-v3'
   el.textContent = COMPONENT_CSS
   document.head.appendChild(el)
 }
@@ -456,10 +717,10 @@ function useDexieLive(querier, deps, initial) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HOOK: useTilt — inclinación 3D con CSS custom properties
+// HOOK: useTilt — inclinación 3D con CSS custom properties (sin RAF extra)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function useTilt() {
+function useTilt(maxDeg = 12) {
   const ref = useRef(null)
 
   const apply = useCallback((rx, ry) => {
@@ -476,21 +737,21 @@ function useTilt() {
     const x = e.clientX - left
     const y = e.clientY - top
     apply(
-      ((y - height / 2) / (height / 2)) * -11,
-      ((x - width  / 2) / (width  / 2)) *  11,
+      ((y - height / 2) / (height / 2)) * -maxDeg,
+      ((x - width  / 2) / (width  / 2)) *  maxDeg,
     )
-  }, [apply])
+  }, [apply, maxDeg])
 
   const handleTouchMove = useCallback((e) => {
-    const el = ref.current
-    const touch = e.touches[0]
-    if (!el || !touch) return
+    const el  = ref.current
+    const t   = e.touches[0]
+    if (!el || !t) return
     const { left, top, width, height } = el.getBoundingClientRect()
     apply(
-      ((touch.clientY - top  - height / 2) / (height / 2)) * -11,
-      ((touch.clientX - left - width  / 2) / (width  / 2)) *  11,
+      ((t.clientY - top  - height / 2) / (height / 2)) * -maxDeg,
+      ((t.clientX - left - width  / 2) / (width  / 2)) *  maxDeg,
     )
-  }, [apply])
+  }, [apply, maxDeg])
 
   const reset = useCallback(() => { apply(0, 0) }, [apply])
 
@@ -504,22 +765,20 @@ function useTilt() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONSTANTES DE GAUGE
+// IMC — CONSTANTES Y UTILIDADES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-//  ViewBox: 0 0 280 185
-//  Centro de la aguja: (140, 155)
-//  Radio del track externo: 110  →  los arcos de color tienen stroke-width 28
-//  El arco va de 180° a 360° en sentido HORARIO (sweep=1, CW).
-//    · 180° → (-1, 0) → punto LEFT  (30, 155)
-//    · 270° → ( 0,-1) → punto TOP   (140, 45)  [porque sin(270°)=-1 y y↓]
-//    · 360° → ( 1, 0) → punto RIGHT (250, 155)
-//  IMC [10, 45] → ángulos [180°, 360°], fórmula: 180 + ((imc-10)/35)*180
+//  ViewBox del gauge: 0 0 280 180
+//  Centro de la aguja: (140, 152)   Radio del track: 108
+//  El arco va de 180° a 360° en sentido HORARIO (sweep=1)
+//    · 180° → punto izquierdo  (32, 152)
+//    · 270° → punto superior  (140, 44)
+//    · 360° → punto derecho   (248, 152)
+//  IMC [10, 45] → ángulos [180°, 360°]
 
-const GCX   = 140   // gauge center X
-const GCY   = 155   // gauge center Y
-const GR    = 110   // radio del track
-
+const GCX     = 140    // gauge center X
+const GCY     = 152    // gauge center Y
+const GR      = 108    // radio del track
 const IMC_MIN = 10
 const IMC_MAX = 45
 
@@ -528,13 +787,19 @@ function imcToAngle(imc) {
   return 180 + ((c - IMC_MIN) / (IMC_MAX - IMC_MIN)) * 180
 }
 
-// Punto en coordenadas cartesianas SVG para un radio y ángulo dados
+/** Convierte IMC a porcentaje [0, 100] para la barra horizontal. */
+function imcToPct(imc) {
+  if (imc == null) return null
+  return Math.max(0, Math.min(100, ((imc - IMC_MIN) / (IMC_MAX - IMC_MIN)) * 100))
+}
+
+/** Punto SVG cartesiano para ángulo y radio dados. */
 function pt(r, deg) {
   const rad = (deg * Math.PI) / 180
   return { x: GCX + r * Math.cos(rad), y: GCY + r * Math.sin(rad) }
 }
 
-// Descripción de arco SVG (CW: sweep=1)
+/** Descripción de arco SVG clockwise (sweep=1). */
 function arc(r, a1, a2) {
   const s = pt(r, a1)
   const e = pt(r, a2)
@@ -542,7 +807,7 @@ function arc(r, a1, a2) {
   return `M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}`
 }
 
-// Zonas del IMC con sus ángulos precalculados
+/** Zonas de IMC (clasificación OMS). */
 const IMC_ZONES = [
   { label: 'Bajo peso',    min: 0,    max: 18.5, color: '#4ECDC4' },
   { label: 'Normal',       min: 18.5, max: 25,   color: '#2ECC71' },
@@ -560,6 +825,7 @@ const GAUGE_ZONES = IMC_ZONES.map((z) => {
 }).filter(Boolean)
 
 function getZone(imc) {
+  if (imc == null) return null
   return IMC_ZONES.find((z) => imc >= z.min && imc < z.max) ?? IMC_ZONES.at(-1)
 }
 
@@ -569,39 +835,28 @@ function calcImc(peso, altura) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FORM
+// ESTADO INICIAL DEL FORMULARIO
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const FORM_INIT = {
-  fecha:           () => new Date().toISOString().slice(0, 10),
-  peso:            '',
-  altura:          '',
-  masaGrasa:       '',
-  masaMuscular:    '',
-  aguaCorporal:    '',
-  cintura:         '',
-  cadera:          '',
-  presionArterial: '',
-  glucosa:         '',
-  notas:           '',
+function buildForm(overrides = {}) {
+  return {
+    fecha:           new Date().toISOString().slice(0, 10),
+    peso:            '',
+    altura:          '',
+    masaGrasa:       '',
+    masaMuscular:    '',
+    aguaCorporal:    '',
+    cintura:         '',
+    cadera:          '',
+    presionArterial: '',
+    glucosa:         '',
+    notas:           '',
+    ...overrides,
+  }
 }
 
-const buildForm = (overrides = {}) => ({
-  fecha:           new Date().toISOString().slice(0, 10),
-  peso:            '',
-  altura:          '',
-  masaGrasa:       '',
-  masaMuscular:    '',
-  aguaCorporal:    '',
-  cintura:         '',
-  cadera:          '',
-  presionArterial: '',
-  glucosa:         '',
-  notas:           '',
-  ...overrides,
-})
-
-const n = (v) => (v !== '' ? Number(v) : null)
+/** Convierte string a number o null si vacío. */
+const n = (v) => (v !== '' && v != null ? Number(v) : null)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -610,7 +865,7 @@ const n = (v) => (v !== '' ? Number(v) : null)
 export default function HistoriaClinica({ pacienteId = 'local' }) {
   useEffect(() => { injectStyles() }, [])
 
-  // ── Carga reactiva desde Dexie ──────────────────────────────────────────────
+  // ── Historial reactivo desde Dexie ──────────────────────────────────────────
   const historias = useDexieLive(
     () =>
       db.historias
@@ -623,16 +878,20 @@ export default function HistoriaClinica({ pacienteId = 'local' }) {
     [],
   )
 
-  const ultima   = historias[0]  ?? null
-  const anterior = historias[1]  ?? null
+  const ultima   = historias[0] ?? null
+  const anterior = historias[1] ?? null
 
-  // ── Form ────────────────────────────────────────────────────────────────────
+  // ── Form local ──────────────────────────────────────────────────────────────
   const [form,      setForm]      = useState(() => buildForm())
   const [guardando, setGuardando] = useState(false)
   const [savedId,   setSavedId]   = useState(null)
 
-  const imc  = useMemo(() => calcImc(Number(form.peso), Number(form.altura)), [form.peso, form.altura])
-  const zone = imc ? getZone(imc) : null
+  // IMC calculado en tiempo real desde los inputs del form
+  const imc  = useMemo(
+    () => calcImc(Number(form.peso), Number(form.altura)),
+    [form.peso, form.altura],
+  )
+  const zone = useMemo(() => getZone(imc), [imc])
 
   const handleChange = useCallback((e) => {
     const { name, value } = e.target
@@ -642,6 +901,7 @@ export default function HistoriaClinica({ pacienteId = 'local' }) {
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault()
+    // Al menos debe haber peso o grasa para guardar
     if (!form.peso && !form.masaGrasa) return
     setGuardando(true)
     try {
@@ -667,193 +927,238 @@ export default function HistoriaClinica({ pacienteId = 'local' }) {
       await db.historias.add(record)
       await queueSyncTask('historias', 'CREATE', record)
       setSavedId(id)
-      // Mantener altura entre registros consecutivos
+      // Conservar altura para registros sucesivos de la misma consulta
       setForm(buildForm({ altura: form.altura }))
     } finally {
       setGuardando(false)
     }
   }, [form, imc, pacienteId])
 
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="hc">
 
-      {/* ── Encabezado ── */}
-      <div style={{ marginBottom: 'var(--space-6)' }}>
-        <h1 style={{
-          fontSize: 'var(--text-2xl)',
-          fontWeight: 800,
-          letterSpacing: '-.02em',
-          lineHeight: 1.1,
-        }}>
-          Historia Clínica
-        </h1>
-        {ultima && (
-          <p style={{
-            color: 'var(--color-text-mid)',
-            fontSize: 'var(--text-sm)',
-            marginTop: 'var(--space-1)',
-          }}>
+      {/* ── Encabezado ─────────────────────────────────────────────────────── */}
+      <div className="hc-header">
+        <h1 className="hc-title">Historia Clínica</h1>
+        {ultima ? (
+          <p className="hc-subtitle">
             Última consulta:{' '}
             {new Date(ultima.fecha + 'T12:00:00').toLocaleDateString('es-AR', {
-              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
             })}
           </p>
+        ) : (
+          <p className="hc-subtitle">Sin consultas registradas aún</p>
         )}
       </div>
 
-      {/* ── Dashboard de métricas ── */}
-      <p className="hc-section-title">Métricas actuales</p>
+      {/* ── Dashboard de métricas 3D ────────────────────────────────────────── */}
+      <p className="hc-section-title">
+        <span>Métricas actuales</span>
+      </p>
       <div className="hc-dashboard">
         <MetricCard
-          variant="peso"  icon="⚖️"  label="Peso"
-          value={ultima?.peso}  unit="kg"  prev={anterior?.peso}
+          variant="peso"
+          icon="⚖️"
+          label="Peso"
+          value={ultima?.peso}
+          unit="kg"
+          prev={anterior?.peso}
           lowerIsBetter
         />
         <MetricCard
-          variant="grasa"  icon="🔥"  label="Masa Grasa"
-          value={ultima?.masaGrasa}  unit="%"  prev={anterior?.masaGrasa}
+          variant="grasa"
+          icon="🔥"
+          label="Masa Grasa"
+          value={ultima?.masaGrasa}
+          unit="%"
+          prev={anterior?.masaGrasa}
           lowerIsBetter
         />
         <MetricCard
-          variant="musculo"  icon="💪"  label="Músculo"
-          value={ultima?.masaMuscular}  unit="%"  prev={anterior?.masaMuscular}
+          variant="musculo"
+          icon="💪"
+          label="Músculo"
+          value={ultima?.masaMuscular}
+          unit="%"
+          prev={anterior?.masaMuscular}
           lowerIsBetter={false}
         />
       </div>
 
-      {/* ── Gauge IMC ── */}
+      {/* ── Gauge IMC (medidor semicircular) ───────────────────────────────── */}
       <div className="hc-gauge-section">
         <p className="hc-section-title" style={{ marginBottom: 'var(--space-1)' }}>
-          Índice de masa corporal
+          <span>Índice de Masa Corporal</span>
         </p>
         <ImcGauge imc={imc} zone={zone} />
       </div>
 
-      {/* ── Formulario ── */}
+      {/* ── Formulario de nueva consulta ────────────────────────────────────── */}
       <div className="hc-form-section">
-        <p className="hc-section-title">Registrar consulta</p>
+        <p className="hc-section-title" style={{ marginBottom: 'var(--space-4)' }}>
+          <span>Registrar consulta</span>
+        </p>
+
         <form className="hc-form" onSubmit={handleSubmit} noValidate>
 
+          {/* Fecha */}
           <div className="hc-g2">
-            <HField id="fecha" name="fecha" label="Fecha" type="date"
-              value={form.fecha} onChange={handleChange} />
-            <div />
+            <HField
+              id="fecha" name="fecha" label="📅 Fecha" type="date"
+              value={form.fecha} onChange={handleChange}
+            />
+            <div /> {/* espacio */}
           </div>
 
+          {/* Peso y Altura */}
           <div className="hc-g2">
-            <HField id="peso" name="peso" label="Peso (kg)" type="number"
-              min="0" max="500" step="0.1" placeholder="70.5" inputMode="decimal"
-              value={form.peso} onChange={handleChange} />
-            <HField id="altura" name="altura" label="Altura (cm)" type="number"
-              min="0" max="300" step="0.5" placeholder="170" inputMode="decimal"
-              value={form.altura} onChange={handleChange} />
+            <HField
+              id="peso" name="peso" label="⚖️ Peso (kg)"
+              type="number" min="0" max="500" step="0.1"
+              placeholder="70.5" inputMode="decimal"
+              value={form.peso} onChange={handleChange}
+            />
+            <HField
+              id="altura" name="altura" label="📏 Altura (cm)"
+              type="number" min="0" max="300" step="0.5"
+              placeholder="170" inputMode="decimal"
+              value={form.altura} onChange={handleChange}
+            />
           </div>
 
-          {/* Preview IMC en tiempo real */}
-          {imc && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-md)',
-              background: zone ? zone.color + '22' : 'var(--color-surface-raised)',
-              fontSize: 'var(--text-sm)',
-              fontWeight: 600,
-              animation: 'fade-in .2s both',
-            }}>
-              <span style={{ color: zone?.color ?? 'inherit' }}>
-                IMC {imc.toFixed(1)}
-              </span>
-              <span style={{
-                padding: '1px 8px',
-                borderRadius: 'var(--radius-full)',
-                background: zone?.color,
-                color: '#fff',
-                fontSize: 'var(--text-xs)',
-              }}>
-                {zone?.label}
-              </span>
-            </div>
+          {/* IMC en tiempo real — medidor cromático inline */}
+          {imc != null && (
+            <ImcMeter imc={imc} zone={zone} />
           )}
 
-          <div className="hc-g3">
-            <HField id="masaGrasa" name="masaGrasa" label="Grasa (%)" type="number"
-              min="0" max="100" step="0.1" placeholder="22" inputMode="decimal"
-              value={form.masaGrasa} onChange={handleChange} />
-            <HField id="masaMuscular" name="masaMuscular" label="Músculo (%)" type="number"
-              min="0" max="100" step="0.1" placeholder="38" inputMode="decimal"
-              value={form.masaMuscular} onChange={handleChange} />
-            <HField id="aguaCorporal" name="aguaCorporal" label="Agua (%)" type="number"
-              min="0" max="100" step="0.1" placeholder="55" inputMode="decimal"
-              value={form.aguaCorporal} onChange={handleChange} />
+          {/* % Grasa y % Músculo */}
+          <div className="hc-g2">
+            <HField
+              id="masaGrasa" name="masaGrasa" label="🔥 Grasa (%)"
+              type="number" min="0" max="100" step="0.1"
+              placeholder="22.0" inputMode="decimal"
+              value={form.masaGrasa} onChange={handleChange}
+            />
+            <HField
+              id="masaMuscular" name="masaMuscular" label="💪 Músculo (%)"
+              type="number" min="0" max="100" step="0.1"
+              placeholder="38.0" inputMode="decimal"
+              value={form.masaMuscular} onChange={handleChange}
+            />
           </div>
 
+          {/* ── Campos secundarios ── */}
+          <div className="hc-form-divider" />
+          <p className="hc-subsection-label">Datos adicionales (opcional)</p>
+
           <div className="hc-g3">
-            <HField id="cintura" name="cintura" label="Cintura (cm)" type="number"
-              min="0" step="0.5" placeholder="80" inputMode="decimal"
-              value={form.cintura} onChange={handleChange} />
-            <HField id="cadera" name="cadera" label="Cadera (cm)" type="number"
-              min="0" step="0.5" placeholder="95" inputMode="decimal"
-              value={form.cadera} onChange={handleChange} />
-            <HField id="glucosa" name="glucosa" label="Glucosa (mg/dL)" type="number"
-              min="0" step="1" placeholder="95" inputMode="numeric"
-              value={form.glucosa} onChange={handleChange} />
+            <HField
+              id="aguaCorporal" name="aguaCorporal" label="💧 Agua (%)"
+              type="number" min="0" max="100" step="0.1"
+              placeholder="55.0" inputMode="decimal"
+              value={form.aguaCorporal} onChange={handleChange}
+            />
+            <HField
+              id="cintura" name="cintura" label="📐 Cintura (cm)"
+              type="number" min="0" step="0.5"
+              placeholder="80" inputMode="decimal"
+              value={form.cintura} onChange={handleChange}
+            />
+            <HField
+              id="cadera" name="cadera" label="📐 Cadera (cm)"
+              type="number" min="0" step="0.5"
+              placeholder="95" inputMode="decimal"
+              value={form.cadera} onChange={handleChange}
+            />
           </div>
 
           <div className="hc-g2">
-            <HField id="presionArterial" name="presionArterial"
-              label="Presión arterial" placeholder="120/80"
-              value={form.presionArterial} onChange={handleChange} />
-            <div />
+            <HField
+              id="presionArterial" name="presionArterial" label="🩺 Presión arterial"
+              placeholder="120/80"
+              value={form.presionArterial} onChange={handleChange}
+            />
+            <HField
+              id="glucosa" name="glucosa" label="🩸 Glucosa (mg/dL)"
+              type="number" min="0" step="1"
+              placeholder="95" inputMode="numeric"
+              value={form.glucosa} onChange={handleChange}
+            />
           </div>
 
           <div className="hf">
-            <label htmlFor="notas">Notas clínicas</label>
+            <label htmlFor="notas">📝 Notas clínicas</label>
             <textarea
               id="notas" name="notas"
-              placeholder="Observaciones, indicaciones, estado general…"
-              value={form.notas} onChange={handleChange}
+              placeholder="Observaciones, estado general, indicaciones…"
+              value={form.notas}
+              onChange={handleChange}
               rows={3}
             />
           </div>
 
+          {/* Footer de acciones */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 'var(--space-3)',
+            gap: 'var(--space-4)',
             flexWrap: 'wrap',
           }}>
-            <button type="submit" className="hc-submit" disabled={guardando}>
-              {guardando ? 'Guardando…' : 'Registrar consulta'}
+            <button
+              type="submit"
+              className="hc-submit"
+              disabled={guardando || (!form.peso && !form.masaGrasa)}
+            >
+              {guardando ? (
+                <>
+                  <IconSpinner />
+                  <span>Guardando…</span>
+                </>
+              ) : (
+                <>
+                  <IconSave />
+                  <span>Guardar consulta</span>
+                </>
+              )}
             </button>
+
             {savedId && (
               <span className="hc-saved-notice">
-                <IconCheck /> Guardado localmente
+                <IconCheck />
+                Guardado localmente · en cola de sync
               </span>
             )}
           </div>
+
         </form>
       </div>
 
-      {/* ── Timeline ── */}
-      <p className="hc-section-title">Historial de consultas</p>
+      {/* ── Timeline de historial ───────────────────────────────────────────── */}
+      <p className="hc-section-title">
+        <span>Historial de consultas</span>
+      </p>
       <Timeline historias={historias} />
+
     </div>
   )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MetricCard — tarjeta 3D tilt
+// MetricCard — tarjeta 3D tilt con perspectiva interactiva
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function MetricCard({ variant, icon, label, value, unit, prev, lowerIsBetter }) {
-  const tilt = useTilt()
+  const tilt = useTilt(12)
 
   const trend = useMemo(() => {
     if (value == null || prev == null) return null
     const diff = value - prev
-    if (Math.abs(diff) < 0.01) return null
+    if (Math.abs(diff) < 0.009) return null
     const up     = diff > 0
     const isGood = lowerIsBetter ? !up : up
     return {
@@ -871,26 +1176,34 @@ function MetricCard({ variant, icon, label, value, unit, prev, lowerIsBetter }) 
       onMouseLeave={tilt.onMouseLeave}
       onTouchMove={tilt.onTouchMove}
       onTouchEnd={tilt.onTouchEnd}
+      aria-label={`${label}: ${value != null ? `${value.toFixed(1)} ${unit}` : 'Sin datos'}`}
     >
       <div className="mc__inner">
         <div className="mc__icon" aria-hidden="true">{icon}</div>
         <div className="mc__label">{label}</div>
         <div className="mc__value">
-          {value != null
-            ? <>{value.toFixed(1)}<span className="mc__unit">{unit}</span></>
-            : '—'}
+          {value != null ? (
+            <>
+              {value.toFixed(1)}
+              <span className="mc__unit">{unit}</span>
+            </>
+          ) : (
+            '—'
+          )}
         </div>
         {trend && (
           <div
             className="mc__trend"
-            style={{ color: trend.good ? 'rgba(255,255,255,.92)' : 'rgba(255,190,190,.9)' }}
+            style={{ color: trend.good ? 'rgba(255,255,255,.9)' : 'rgba(255,180,180,.9)' }}
             aria-label={`${trend.label} respecto a consulta anterior`}
           >
             <span aria-hidden="true">{trend.arrow}</span>
             <span>{trend.label}</span>
           </div>
         )}
-        {value == null && <div className="mc__empty">Sin datos aún</div>}
+        {value == null && (
+          <div className="mc__empty">Sin datos aún</div>
+        )}
       </div>
     </div>
   )
@@ -901,38 +1214,42 @@ function MetricCard({ variant, icon, label, value, unit, prev, lowerIsBetter }) 
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function ImcGauge({ imc, zone }) {
-  // Ángulo del IMC en [180°, 360°]; en reposo (sin IMC) la aguja descansa en 180°
   const needleAngle = imc != null ? imcToAngle(imc) : 180
 
   return (
     <div className="hc-gauge-wrap">
       <svg
         className="hc-gauge-svg"
-        viewBox="0 0 280 185"
-        aria-hidden="true"
+        viewBox="0 0 280 180"
+        aria-label={
+          imc != null
+            ? `IMC: ${imc.toFixed(1)} — ${zone?.label ?? ''}`
+            : 'Ingresá peso y altura para calcular el IMC'
+        }
+        role="img"
       >
         <defs>
           {/* Gradiente cromático de la aguja */}
-          <linearGradient id="hc-needle-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <linearGradient id="hc-ng" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%"   stopColor="rgba(255,255,255,0)" />
-            <stop offset="35%"  stopColor="rgba(255,255,255,0.5)" />
-            <stop offset="100%" stopColor={zone?.color ?? '#BDBDBD'} />
+            <stop offset="30%"  stopColor="rgba(255,255,255,.45)" />
+            <stop offset="100%" stopColor={zone?.color ?? '#9E9E9E'} />
           </linearGradient>
-          {/* Glow suave en la punta */}
+          {/* Glow de la punta */}
           <filter id="hc-glow" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feGaussianBlur stdDeviation="2" result="blur" />
             <feMerge>
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          {/* Sombra suave para depth */}
-          <filter id="hc-shadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="1" dy="2" stdDeviation="2" floodOpacity="0.2" />
+          {/* Sombra del hub */}
+          <filter id="hc-hub-shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodOpacity=".22" />
           </filter>
         </defs>
 
-        {/* Track gris (fondo del arco) */}
+        {/* Track fondo */}
         <path
           d={arc(GR, 180, 360)}
           fill="none"
@@ -941,7 +1258,7 @@ function ImcGauge({ imc, zone }) {
           strokeLinecap="round"
         />
 
-        {/* Segmentos de color por zona */}
+        {/* Segmentos cromáticos por zona */}
         {GAUGE_ZONES.map((z, i) => (
           <path
             key={i}
@@ -949,33 +1266,39 @@ function ImcGauge({ imc, zone }) {
             fill="none"
             stroke={z.color}
             strokeWidth="30"
-            strokeLinecap={i === 0 ? 'round' : i === GAUGE_ZONES.length - 1 ? 'round' : 'butt'}
+            strokeLinecap={
+              i === 0
+                ? 'round'
+                : i === GAUGE_ZONES.length - 1
+                  ? 'round'
+                  : 'butt'
+            }
             opacity=".88"
           />
         ))}
 
         {/* Anillo interior — efecto de profundidad */}
         <path
-          d={arc(GR - 16, 181, 359)}
+          d={arc(GR - 16, 182, 358)}
           fill="none"
           stroke="var(--color-surface)"
-          strokeWidth="3"
-          opacity=".45"
+          strokeWidth="2.5"
+          opacity=".38"
         />
 
-        {/* Marcas de umbral IMC */}
+        {/* Marcas de umbral */}
         {[18.5, 25, 30, 35].map((v) => {
           const a   = imcToAngle(v)
-          const tip = pt(GR + 4,  a)
-          const lbl = pt(GR + 22, a)
+          const tip = pt(GR + 5,  a)
+          const lbl = pt(GR + 23, a)
           return (
             <g key={v}>
-              <circle cx={tip.x} cy={tip.y} r="2" fill="rgba(255,255,255,.7)" />
+              <circle cx={tip.x} cy={tip.y} r="2" fill="rgba(255,255,255,.65)" />
               <text
                 x={lbl.x} y={lbl.y + 3}
                 textAnchor="middle"
                 fill="var(--color-text-low)"
-                fontSize="8.5"
+                fontSize="8"
                 fontWeight="600"
                 fontFamily="var(--font-sans)"
               >
@@ -985,13 +1308,13 @@ function ImcGauge({ imc, zone }) {
           )
         })}
 
-        {/* Sombra de la aguja (depth) */}
+        {/* Sombra de la aguja */}
         <line
           className="gauge-needle-shadow"
           x1={GCX} y1={GCY}
-          x2={GCX + GR - 14} y2={GCY}
-          stroke="rgba(0,0,0,.18)"
-          strokeWidth="6"
+          x2={GCX + GR - 12} y2={GCY}
+          stroke="rgba(0,0,0,.15)"
+          strokeWidth="7"
           strokeLinecap="round"
           style={{ transform: `rotate(${needleAngle}deg)`, filter: 'blur(3px)' }}
         />
@@ -999,9 +1322,9 @@ function ImcGauge({ imc, zone }) {
         {/* Aguja cromática */}
         <line
           className="gauge-needle"
-          x1={GCX - 9} y1={GCY}
-          x2={GCX + GR - 10} y2={GCY}
-          stroke="url(#hc-needle-grad)"
+          x1={GCX - 10} y1={GCY}
+          x2={GCX + GR - 8} y2={GCY}
+          stroke="url(#hc-ng)"
           strokeWidth="3.5"
           strokeLinecap="round"
           filter="url(#hc-glow)"
@@ -1009,20 +1332,20 @@ function ImcGauge({ imc, zone }) {
         />
 
         {/* Hub central */}
-        <circle cx={GCX} cy={GCY} r="9"  fill="var(--color-surface)" filter="url(#hc-shadow)" />
-        <circle cx={GCX} cy={GCY} r="5"  fill={zone?.color ?? 'var(--color-border)'} />
-        <circle cx={GCX} cy={GCY} r="2"  fill="rgba(255,255,255,.6)" />
+        <circle cx={GCX} cy={GCY} r="10" fill="var(--color-surface)" filter="url(#hc-hub-shadow)" />
+        <circle cx={GCX} cy={GCY} r="6"  fill={zone?.color ?? 'var(--color-border)'} />
+        <circle cx={GCX} cy={GCY} r="2"  fill="rgba(255,255,255,.55)" />
 
-        {/* Etiqueta de zona central inferior */}
+        {/* Etiqueta central inferior */}
         <text
-          x={GCX} y={GCY + 26}
+          x={GCX} y={GCY + 28}
           textAnchor="middle"
           fill="var(--color-text-low)"
           fontSize="10"
           fontFamily="var(--font-sans)"
           fontWeight="500"
         >
-          {imc != null ? `${imc.toFixed(1)} kg/m²` : 'Ingresá peso y altura'}
+          {imc != null ? `${imc.toFixed(1)} kg/m²` : 'Completá peso y altura'}
         </text>
       </svg>
 
@@ -1040,20 +1363,76 @@ function ImcGauge({ imc, zone }) {
           </span>
         </div>
       ) : (
-        <p className="hc-imc-empty">Completá peso y altura para ver el IMC</p>
+        <p className="hc-imc-empty">Ingresá peso y altura para ver el IMC</p>
       )}
     </div>
   )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Timeline — historial de consultas con animación IntersectionObserver
+// ImcMeter — barra cromática inline (feedback en tiempo real en el formulario)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ImcMeter({ imc, zone }) {
+  const pct = imcToPct(imc)
+
+  return (
+    <div className="hc-imc-meter" role="status" aria-live="polite">
+      <div className="hc-imc-meter__top">
+        <div className="hc-imc-meter__reading">
+          <span
+            className="hc-imc-meter__num"
+            style={{ color: zone?.color ?? 'var(--color-text-high)' }}
+          >
+            {imc.toFixed(1)}
+          </span>
+          <span className="hc-imc-meter__unit">kg/m²</span>
+        </div>
+        <span
+          className="hc-imc-meter__zone"
+          style={{ background: zone?.color ?? 'var(--color-text-low)' }}
+          aria-label={`Clasificación: ${zone?.label ?? ''}`}
+        >
+          {zone?.label}
+        </span>
+      </div>
+
+      {/* Barra de gradiente con indicador flotante */}
+      <div className="hc-imc-track" aria-hidden="true">
+        {pct != null && (
+          <div
+            className="hc-imc-thumb"
+            style={{
+              left: `${pct}%`,
+              borderColor: zone?.color ?? '#fff',
+              boxShadow: `0 0 0 2px ${zone?.color ?? '#999'}, 0 2px 8px rgba(0,0,0,.22)`,
+            }}
+          />
+        )}
+      </div>
+
+      {/* Etiquetas de umbrales */}
+      <div className="hc-imc-ticks" aria-hidden="true">
+        <span className="hc-imc-tick">10</span>
+        <span className="hc-imc-tick">18.5</span>
+        <span className="hc-imc-tick">25</span>
+        <span className="hc-imc-tick">30</span>
+        <span className="hc-imc-tick">35</span>
+        <span className="hc-imc-tick">40</span>
+        <span className="hc-imc-tick">45</span>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Timeline — historial de consultas con IntersectionObserver
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function Timeline({ historias }) {
   const containerRef = useRef(null)
 
-  // Observar items nuevos (y existentes sin clase visible) cada vez que cambia la lista
+  // Anima los items nuevos (no visibles) en cada actualización de la lista
   useEffect(() => {
     const root = containerRef.current
     if (!root) return
@@ -1067,7 +1446,7 @@ function Timeline({ historias }) {
           }
         })
       },
-      { threshold: 0.1, rootMargin: '0px 0px -32px 0px' },
+      { threshold: 0.08, rootMargin: '0px 0px -28px 0px' },
     )
 
     const items = root.querySelectorAll('.tl-item:not(.tl-item--visible)')
@@ -1080,8 +1459,8 @@ function Timeline({ historias }) {
     return (
       <div className="tl-empty">
         <div className="tl-empty__icon">📋</div>
-        <p>Sin consultas registradas aún</p>
-        <p style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-1)' }}>
+        <p className="tl-empty__title">Sin consultas registradas</p>
+        <p className="tl-empty__hint">
           Completá el formulario para registrar la primera.
         </p>
       </div>
@@ -1094,7 +1473,7 @@ function Timeline({ historias }) {
         <TimelineItem
           key={h.id}
           historia={h}
-          delay={Math.min(i * 55, 280)}
+          delay={Math.min(i * 50, 250)}
         />
       ))}
     </div>
@@ -1104,7 +1483,10 @@ function Timeline({ historias }) {
 function TimelineItem({ historia: h, delay }) {
   const zone    = h.imc != null ? getZone(h.imc) : null
   const dateStr = new Date(h.fecha + 'T12:00:00').toLocaleDateString('es-AR', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    weekday: 'long',
+    day:     'numeric',
+    month:   'long',
+    year:    'numeric',
   })
 
   return (
@@ -1112,20 +1494,29 @@ function TimelineItem({ historia: h, delay }) {
       className="tl-item"
       style={{ transitionDelay: `${delay}ms` }}
     >
-      {/* Punto de la línea con color de zona */}
+      {/* Punto cromático en la línea */}
       <div
         className="tl-dot"
         style={zone ? {
-          background:  zone.color,
-          boxShadow:   `0 0 0 2px ${zone.color}44`,
+          background: zone.color,
+          boxShadow:  `0 0 0 2.5px ${zone.color}55`,
         } : {}}
+        aria-hidden="true"
       />
 
-      <div className="tl-card" style={zone ? { borderLeftColor: zone.color + '88' } : {}}>
+      <article
+        className="tl-card"
+        style={zone ? { borderLeftColor: zone.color + 'AA' } : {}}
+        aria-label={`Consulta del ${dateStr}`}
+      >
         <div className="tl-card__header">
-          <span className="tl-card__date">{dateStr}</span>
+          <time className="tl-card__date" dateTime={h.fecha}>{dateStr}</time>
           {zone && h.imc != null && (
-            <span className="tl-imc-badge" style={{ background: zone.color }}>
+            <span
+              className="tl-imc-badge"
+              style={{ background: zone.color }}
+              aria-label={`IMC ${h.imc.toFixed(1)}, ${zone.label}`}
+            >
               IMC {h.imc.toFixed(1)} · {zone.label}
             </span>
           )}
@@ -1133,29 +1524,29 @@ function TimelineItem({ historia: h, delay }) {
 
         {/* Grid de métricas */}
         <div className="tl-metrics">
-          {h.peso          != null && <TlMetric v={`${h.peso} kg`}        l="Peso"     />}
-          {h.masaGrasa     != null && <TlMetric v={`${h.masaGrasa}%`}     l="Grasa"    />}
-          {h.masaMuscular  != null && <TlMetric v={`${h.masaMuscular}%`}  l="Músculo"  />}
-          {h.aguaCorporal  != null && <TlMetric v={`${h.aguaCorporal}%`}  l="Agua"     />}
-          {h.cintura       != null && <TlMetric v={`${h.cintura} cm`}     l="Cintura"  />}
-          {h.cadera        != null && <TlMetric v={`${h.cadera} cm`}      l="Cadera"   />}
-          {h.glucosa       != null && <TlMetric v={`${h.glucosa} mg/dL`}  l="Glucosa"  />}
-          {h.presionArterial       && <TlMetric v={h.presionArterial}     l="Presión"  />}
+          {h.peso          != null && <TlMetric v={`${h.peso} kg`}       l="Peso"      />}
+          {h.masaGrasa     != null && <TlMetric v={`${h.masaGrasa}%`}    l="Grasa"     />}
+          {h.masaMuscular  != null && <TlMetric v={`${h.masaMuscular}%`} l="Músculo"   />}
+          {h.aguaCorporal  != null && <TlMetric v={`${h.aguaCorporal}%`} l="Agua"      />}
+          {h.cintura       != null && <TlMetric v={`${h.cintura} cm`}    l="Cintura"   />}
+          {h.cadera        != null && <TlMetric v={`${h.cadera} cm`}     l="Cadera"    />}
+          {h.glucosa       != null && <TlMetric v={`${h.glucosa} mg/dL`} l="Glucosa"   />}
+          {h.presionArterial       && <TlMetric v={h.presionArterial}    l="Presión"   />}
         </div>
 
-        {/* Notas */}
+        {/* Notas clínicas */}
         {h.notas && (
-          <p className="tl-card__notas">"{h.notas}"</p>
+          <blockquote className="tl-card__notas">"{h.notas}"</blockquote>
         )}
 
-        {/* Indicador de sync */}
-        <div className="tl-sync">
+        {/* Estado de sincronización */}
+        <div className="tl-sync" aria-label={h.sincronizado ? 'Sincronizado' : 'Pendiente de sync'}>
           {h.sincronizado
             ? <><IconCheck /> Sincronizado</>
-            : <><IconCloud /> Guardado localmente</>
+            : <><IconCloud /> Guardado localmente · pendiente de sync</>
           }
         </div>
-      </div>
+      </article>
     </div>
   )
 }
@@ -1182,7 +1573,9 @@ function TlMetric({ v, l }) {
   )
 }
 
-// ─── Micro-íconos ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Micro-íconos SVG (inline, sin dependencias externas)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function IconCheck() {
   return (
@@ -1198,6 +1591,30 @@ function IconCloud() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
          stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
       <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+    </svg>
+  )
+}
+
+function IconSave() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  )
+}
+
+function IconSpinner() {
+  return (
+    <svg
+      width="14" height="14" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+      style={{ animation: 'spin 1s linear infinite' }}
+      aria-hidden="true"
+    >
+      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
     </svg>
   )
 }
