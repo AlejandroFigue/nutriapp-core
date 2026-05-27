@@ -1,22 +1,21 @@
 /**
- * BuscadorProductos.jsx — Buscador de alimentos con panel flotante blur
+ * BuscadorProductos.jsx — Barra de búsqueda inteligente flotante
  *
- * Características:
- *   · Input con debounce 280 ms, búsqueda en `productos` (v3) + `alimentos` (v1)
- *   · Panel flotante posicionado en capa superior con backdrop-filter: blur(22px)
- *   · Sección sticky del panel con encabezado translúcido
- *   · Row inline de cantidad con spinner ± tras seleccionar un resultado
- *   · Cálculo de macros proporcional a la cantidad elegida
- *   · onAgregar(item) devuelve objeto normalizado con todos los macros
- *   · Cierre al hacer click fuera del componente
- *   · Sin dependencias externas — iconos SVG inline
+ * Features:
+ *   · Campo de búsqueda con debounce 280 ms sobre tabla `productos` de Dexie
+ *   · Panel flotante con backdrop-filter: blur(8px) + saturación
+ *   · Sección sticky con encabezado translúcido
+ *   · Row de cantidad con spinner ± tras seleccionar
+ *   · Cálculo de macros proporcional en tiempo real
+ *   · onAgregar(item) → objeto normalizado con macros + texto para inserción
+ *   · Cierre al click fuera (mousedown + touchstart)
+ *   · Sin dependencias externas — íconos SVG inline
  *
  * Props:
- *   pacienteId  {string}   ID del paciente activo (contexto)
- *   comida      {string}   Nombre de la comida activa (ej. 'desayuno') — aparece en labels
- *   onAgregar   {Function} Callback(item) al confirmar la adición
- *   placeholder {string}   Texto de placeholder del input
- *   autoFocus   {boolean}  Autofocus al montar
+ *   comida      {string}    Nombre de la comida activa — aparece en labels
+ *   onAgregar   {Function}  Callback(item) al confirmar la adición
+ *   placeholder {string}    Placeholder del input
+ *   autoFocus   {boolean}   Autofocus al montar
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -36,7 +35,7 @@ const BP_CSS = `
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 11px var(--space-4);
+  padding: 10px var(--space-4);
   background: var(--color-surface);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-xl);
@@ -63,7 +62,6 @@ const BP_CSS = `
   font-size: var(--text-sm);
   color: var(--color-text-high);
   min-width: 0;
-  /* Suprimir ícono nativo de búsqueda en WebKit */
   -webkit-appearance: none;
   appearance: none;
 }
@@ -87,7 +85,6 @@ const BP_CSS = `
   width: 22px;
   height: 22px;
   border-radius: var(--radius-full);
-  border: none;
   background: var(--color-surface-raised);
   color: var(--color-text-mid);
   cursor: pointer;
@@ -97,22 +94,22 @@ const BP_CSS = `
 .bp-clear:hover { background: var(--color-border); color: var(--color-text-high); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   PANEL FLOTANTE — capa superior con desenfoque de fondo elegante
+   PANEL FLOTANTE — capa superior con desenfoque de fondo
    ═══════════════════════════════════════════════════════════════════════════ */
 .bp-panel {
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
   z-index: var(--z-overlay);
 
-  /* El trío mágico: blur + saturación + capa translúcida */
-  background: rgba(255,255,255,.90);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  /* Blur + saturación + capa translúcida = glassmorphism */
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(8px) saturate(180%);
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
 
   border-radius: var(--radius-xl);
-  border: 1px solid rgba(255,255,255,.60);
+  border: 1px solid rgba(255,255,255,.65);
   box-shadow:
     0  2px  6px rgba(0,0,0,.04),
     0  8px  24px rgba(0,0,0,.09),
@@ -120,13 +117,11 @@ const BP_CSS = `
     inset 0 1.5px 0 rgba(255,255,255,.85);
 
   overflow: hidden;
-  max-height: 380px;
+  max-height: 360px;
   overflow-y: auto;
   overscroll-behavior: contain;
 
   animation: bp-drop 220ms cubic-bezier(.34,1.15,.64,1) both;
-
-  /* Scrollbar estilizada */
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
 }
@@ -134,9 +129,8 @@ const BP_CSS = `
 .bp-panel::-webkit-scrollbar-track { background: transparent; }
 .bp-panel::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
 
-/* Dark mode */
 .dark .bp-panel {
-  background: rgba(22,22,24,.90);
+  background: rgba(22,22,24,.92);
   border-color: rgba(255,255,255,.10);
   box-shadow:
     0  2px  6px rgba(0,0,0,.30),
@@ -146,21 +140,21 @@ const BP_CSS = `
 }
 
 @keyframes bp-drop {
-  from { opacity: 0; transform: translateY(-10px) scale(.97); }
-  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  from { opacity: 0; transform: translateY(-8px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);   }
 }
 
-/* ── Encabezado sticky de sección ────────────────────────────────────────── */
+/* ── Encabezado sticky ───────────────────────────────────────────────────── */
 .bp-section-hdr {
   position: sticky;
   top: 0;
-  padding: 7px var(--space-4);
+  padding: 6px var(--space-4);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: .10em;
   text-transform: uppercase;
   color: var(--color-primary);
-  background: rgba(255,255,255,.75);
+  background: rgba(255,255,255,.80);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid rgba(46,125,50,.10);
@@ -170,7 +164,7 @@ const BP_CSS = `
   gap: var(--space-2);
 }
 .dark .bp-section-hdr {
-  background: rgba(22,22,24,.75);
+  background: rgba(22,22,24,.80);
   border-bottom-color: rgba(102,187,106,.10);
 }
 .bp-section-hdr__count {
@@ -224,8 +218,8 @@ const BP_CSS = `
   flex-shrink: 0;
 }
 .bp-qty-btn {
-  width: 29px;
-  height: 29px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-full);
   border: 1.5px solid var(--color-primary-light);
   background: var(--color-surface);
@@ -245,7 +239,7 @@ const BP_CSS = `
 .bp-qty-btn:hover  { background: var(--color-primary-surface); transform: scale(1.12); }
 .bp-qty-btn:active { transform: scale(.90); }
 .bp-qty-input {
-  width: 58px;
+  width: 54px;
   text-align: center;
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -270,14 +264,14 @@ const BP_CSS = `
   flex-shrink: 0;
 }
 
-/* Botón Agregar */
+/* Botón Insertar */
 .bp-add-btn {
   position: relative;
   overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 8px 16px;
+  padding: 7px 14px;
   border-radius: var(--radius-full);
   border: none;
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%);
@@ -293,7 +287,6 @@ const BP_CSS = `
     transform   230ms cubic-bezier(.34,1.56,.64,1),
     box-shadow  230ms ease;
 }
-/* Destello de luz interna */
 .bp-add-btn::after {
   content: '';
   position: absolute;
@@ -314,7 +307,7 @@ const BP_CSS = `
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 11px var(--space-4);
+  padding: 10px var(--space-4);
   cursor: pointer;
   border-bottom: 1px solid rgba(0,0,0,.04);
   transition: background var(--transition-fast);
@@ -323,27 +316,26 @@ const BP_CSS = `
 }
 .dark .bp-item { border-bottom-color: rgba(255,255,255,.04); }
 .bp-item:last-child { border-bottom: none; }
-.bp-item:hover,
-.bp-item:focus { background: rgba(46,125,50,.07); }
-.dark .bp-item:hover,
-.dark .bp-item:focus { background: rgba(102,187,106,.08); }
-.bp-item--active { background: rgba(46,125,50,.10); }
-.dark .bp-item--active { background: rgba(102,187,106,.11); }
+.bp-item:hover, .bp-item:focus { background: rgba(46,125,50,.07); }
+.dark .bp-item:hover, .dark .bp-item:focus { background: rgba(102,187,106,.08); }
+.bp-item--active { background: rgba(46,125,50,.10) !important; }
+.dark .bp-item--active { background: rgba(102,187,106,.11) !important; }
 
 /* Ícono emoji de categoría */
 .bp-item__ico {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--radius-md);
   background: var(--color-primary-surface);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   flex-shrink: 0;
   transition: transform 200ms cubic-bezier(.34,1.56,.64,1);
 }
-.bp-item:hover .bp-item__ico { transform: scale(1.08); }
+.bp-item:hover .bp-item__ico,
+.bp-item--active .bp-item__ico { transform: scale(1.08); }
 
 /* Info del alimento */
 .bp-item__info { flex: 1; min-width: 0; }
@@ -379,10 +371,7 @@ const BP_CSS = `
 .dark .bp-pill--cat { background: rgba(46,125,50,.20); }
 
 /* Calorías */
-.bp-item__kcal {
-  flex-shrink: 0;
-  text-align: right;
-}
+.bp-item__kcal { flex-shrink: 0; text-align: right; }
 .bp-item__kcal-val {
   font-size: var(--text-sm);
   font-weight: 800;
@@ -408,46 +397,43 @@ const BP_CSS = `
   color: var(--color-text-mid);
   margin-bottom: 4px;
 }
-.bp-empty__sub {
-  font-size: 11px;
-  color: var(--color-text-low);
-}
+.bp-empty__sub { font-size: 11px; color: var(--color-text-low); }
 `
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Devuelve un emoji representativo según la categoría del alimento */
+/** Emoji representativo según categoría */
 function emojiCategoria(cat = '') {
   const c = cat.toLowerCase()
-  if (c.includes('fruta'))                                      return '🍎'
-  if (c.includes('verdura') || c.includes('vegetal'))           return '🥦'
-  if (c.includes('carne') || c.includes('proteín'))             return '🥩'
-  if (c.includes('pollo') || c.includes('ave'))                 return '🍗'
-  if (c.includes('pescado') || c.includes('mariscos'))          return '🐟'
+  if (c.includes('fruta'))                                              return '🍎'
+  if (c.includes('verdura') || c.includes('vegetal'))                   return '🥦'
+  if (c.includes('carne') || c.includes('proteín'))                     return '🥩'
+  if (c.includes('pollo') || c.includes('ave'))                         return '🍗'
+  if (c.includes('pescado') || c.includes('mariscos'))                  return '🐟'
   if (c.includes('lácte') || c.includes('leche') || c.includes('yogur')) return '🥛'
-  if (c.includes('queso'))                                      return '🧀'
-  if (c.includes('huevo'))                                      return '🥚'
+  if (c.includes('queso'))                                              return '🧀'
+  if (c.includes('huevo'))                                              return '🥚'
   if (c.includes('cereal') || c.includes('pan') || c.includes('grano')) return '🌾'
-  if (c.includes('pasta') || c.includes('arroz'))               return '🍝'
-  if (c.includes('legumbre') || c.includes('leguminosa'))       return '🫘'
+  if (c.includes('pasta') || c.includes('arroz'))                       return '🍝'
+  if (c.includes('legumbre') || c.includes('leguminosa'))               return '🫘'
   if (c.includes('nuez') || c.includes('semilla') || c.includes('fruto seco')) return '🥜'
-  if (c.includes('aceite') || c.includes('grasa'))              return '🫒'
+  if (c.includes('aceite') || c.includes('grasa'))                      return '🫒'
   if (c.includes('bebida') || c.includes('jugo') || c.includes('infusión')) return '🥤'
-  if (c.includes('snack') || c.includes('golosina'))            return '🍪'
-  if (c.includes('suplemento'))                                 return '💊'
-  if (c.includes('azúcar') || c.includes('dulce'))              return '🍯'
+  if (c.includes('snack') || c.includes('golosina'))                    return '🍪'
+  if (c.includes('suplemento'))                                         return '💊'
+  if (c.includes('azúcar') || c.includes('dulce'))                      return '🍯'
   return '🥗'
 }
 
 /**
- * Calcula los macros proporcionales a la cantidad elegida.
- * `porcion` es la unidad base en la que se expresan los valores nutricionales.
+ * Calcula macros proporcionales a la cantidad elegida.
+ * porcion = base en que se expresan los valores nutricionales del producto.
  */
 function calcMacros(producto, cantidad) {
-  const base   = parseFloat(producto.porcion ?? 100)
-  const cant   = parseFloat(cantidad)
+  const base = parseFloat(producto.porcion ?? 100)
+  const cant = parseFloat(cantidad)
   if (!cant || !base) return { calorias: 0, proteinas: 0, carbohidratos: 0, grasas: 0 }
   const f = cant / base
   const r = (v) => Math.round((parseFloat(v ?? 0) * f) * 10) / 10
@@ -460,28 +446,28 @@ function calcMacros(producto, cantidad) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ÍCONOS SVG
+// ÍCONOS SVG INLINE
 // ═══════════════════════════════════════════════════════════════════════════
 
 const IcoSearch = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
     <circle cx="11" cy="11" r="8"/>
     <line x1="21" y1="21" x2="16.65" y2="16.65"/>
   </svg>
 )
-
 const IcoX = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" aria-hidden="true">
     <line x1="18" y1="6"  x2="6" y2="18"/>
     <line x1="6"  y1="6" x2="18" y2="18"/>
   </svg>
 )
-
-const IcoCheck = () => (
+const IcoInsert = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
     <polyline points="20 6 9 17 4 12"/>
   </svg>
 )
@@ -491,7 +477,6 @@ const IcoCheck = () => (
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function BuscadorProductos({
-  pacienteId,
   comida,
   onAgregar,
   placeholder = 'Buscar alimento o producto…',
@@ -504,23 +489,23 @@ export default function BuscadorProductos({
   const [seleccionado, setSeleccionado] = useState(null)
   const [cantidad,     setCantidad]     = useState('100')
   const [isFocused,    setIsFocused]    = useState(false)
-  const [agregando,    setAgregando]    = useState(false)
+  const [insertando,   setInsertando]   = useState(false)
 
   const inputRef   = useRef(null)
   const wrapperRef = useRef(null)
   const timerRef   = useRef(null)
 
-  // ── Inyección de CSS ──────────────────────────────────────────────────
+  // ── Inyección de CSS (una sola vez) ────────────────────────────────────
   useEffect(() => {
-    const ID = 'bp-styles'
+    const ID = 'bp-styles-v2'
     if (document.getElementById(ID)) return
     const el = document.createElement('style')
-    el.id   = ID
+    el.id          = ID
     el.textContent = BP_CSS
     document.head.appendChild(el)
   }, [])
 
-  // ── Cierre al click fuera del componente ──────────────────────────────
+  // ── Cierre al click fuera ──────────────────────────────────────────────
   useEffect(() => {
     function handler(e) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
@@ -537,7 +522,7 @@ export default function BuscadorProductos({
     }
   }, [])
 
-  // ── Búsqueda en Dexie ──────────────────────────────────────────────────
+  // ── Búsqueda instantánea en Dexie (sólo tabla productos) ──────────────
   const buscar = useCallback(async (q) => {
     const term = q.trim().toLowerCase()
     if (term.length < 2) {
@@ -547,31 +532,12 @@ export default function BuscadorProductos({
       return
     }
     try {
-      const [prods, alis] = await Promise.all([
-        db.productos
-          .filter(p => (p.nombre ?? '').toLowerCase().includes(term))
-          .limit(15)
-          .toArray(),
-        db.alimentos
-          .filter(a => (a.nombre ?? '').toLowerCase().includes(term))
-          .limit(10)
-          .toArray(),
-      ])
+      const prods = await db.productos
+        .filter(p => (p.nombre ?? '').toLowerCase().includes(term))
+        .limit(25)
+        .toArray()
 
-      // Normalizar alimentos al formato unificado
-      const alisNorm = alis.map(a => ({
-        ...a,
-        _fuente:  'alimentos',
-        categoria: a.categorias?.[0] ?? 'General',
-        porcion:   a.porcion ?? 100,
-      }))
-
-      // Deduplicar por nombre (productos tienen prioridad)
-      const seen = new Map()
-      for (const p of prods)    seen.set(p.nombre?.toLowerCase() ?? '', { ...p, _fuente: 'productos' })
-      for (const a of alisNorm) if (!seen.has(a.nombre?.toLowerCase() ?? '')) seen.set(a.nombre?.toLowerCase() ?? '', a)
-
-      const merged = [...seen.values()].slice(0, 20)
+      const merged = prods.map(p => ({ ...p, _fuente: 'productos' }))
       setResultados(merged)
       setShowPanel(merged.length > 0)
     } catch (err) {
@@ -582,7 +548,7 @@ export default function BuscadorProductos({
     }
   }, [])
 
-  // ── Handlers de input ──────────────────────────────────────────────────
+  // ── Handlers del input ─────────────────────────────────────────────────
   function handleInput(e) {
     const q = e.target.value
     setQuery(q)
@@ -627,47 +593,50 @@ export default function BuscadorProductos({
     })
   }
 
-  // ── Confirmar adición ──────────────────────────────────────────────────
-  async function handleAgregar() {
+  // ── Confirmar inserción ────────────────────────────────────────────────
+  async function handleInsertar() {
     if (!seleccionado || !cantidad || parseFloat(cantidad) <= 0) return
-    setAgregando(true)
+    setInsertando(true)
     try {
       const macros = calcMacros(seleccionado, cantidad)
       await onAgregar?.({
-        productoId:     seleccionado.id ?? `${seleccionado._fuente}-${seleccionado.nombre}`,
+        productoId:     seleccionado.id ?? seleccionado.nombre,
         nombre:         seleccionado.nombre,
         cantidad:       parseFloat(cantidad),
         unidad:         seleccionado.unidad ?? 'g',
         ...macros,
-        _fuente:        seleccionado._fuente ?? 'productos',
       })
-      // Reset completo
+      // Reset: listo para próxima búsqueda
       setQuery('')
       setResultados([])
       setShowPanel(false)
       setSeleccionado(null)
       setCantidad('100')
+      inputRef.current?.focus()
     } catch (err) {
-      console.error('[BuscadorProductos] Error al agregar:', err)
+      console.error('[BuscadorProductos] Error al insertar:', err)
     } finally {
-      setAgregando(false)
+      setInsertando(false)
     }
   }
 
-  // ── Preview de macros en tiempo real ──────────────────────────────────
+  // ── Preview de macros ─────────────────────────────────────────────────
   const macrosPreview = seleccionado ? calcMacros(seleccionado, cantidad) : null
   const unidadDisplay = seleccionado?.unidad ?? 'g'
   const comidaLabel   = comida
     ? comida.charAt(0).toUpperCase() + comida.slice(1)
     : 'la comida'
 
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="bp" ref={wrapperRef}>
 
-      {/* ── Campo de búsqueda ────────────────────────────────────────── */}
-      <div className={`bp-field${isFocused || showPanel ? ' bp-field--focus' : ''}`}
-           onClick={() => inputRef.current?.focus()}>
-        <span className="bp-icon" aria-hidden="true"><IcoSearch /></span>
+      {/* ── Campo de búsqueda ──────────────────────────────────────────── */}
+      <div
+        className={`bp-field${isFocused || showPanel ? ' bp-field--focus' : ''}`}
+        onClick={() => inputRef.current?.focus()}
+      >
+        <span className="bp-icon"><IcoSearch /></span>
 
         <input
           ref={inputRef}
@@ -708,18 +677,16 @@ export default function BuscadorProductos({
         <div
           className="bp-panel"
           role="listbox"
-          aria-label={`Resultados de búsqueda para ${comidaLabel}`}
+          aria-label={`Resultados para ${comidaLabel}`}
         >
 
-          {/* Row de cantidad (aparece cuando hay selección) */}
+          {/* Row de cantidad (aparece tras seleccionar) */}
           {seleccionado && (
-            <div className="bp-sel-row" role="form" aria-label="Configurar cantidad">
+            <div className="bp-sel-row" role="form" aria-label="Configurar cantidad a insertar">
               <div className="bp-sel-row__name">
-                {emojiCategoria(seleccionado.categoria ?? seleccionado.categorias?.[0])}
-                {' '}{seleccionado.nombre}
+                {emojiCategoria(seleccionado.categoria ?? '')}&nbsp;{seleccionado.nombre}
               </div>
 
-              {/* Spinner ± */}
               <div className="bp-qty-wrap">
                 <button
                   className="bp-qty-btn"
@@ -727,6 +694,7 @@ export default function BuscadorProductos({
                   onClick={() => ajustarCantidad(-10)}
                   aria-label="Reducir 10"
                 >−</button>
+
                 <input
                   className="bp-qty-input"
                   type="number"
@@ -734,18 +702,20 @@ export default function BuscadorProductos({
                   step="1"
                   value={cantidad}
                   onChange={e => setCantidad(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleInsertar()}
                   aria-label="Cantidad"
                 />
+
                 <button
                   className="bp-qty-btn"
                   type="button"
                   onClick={() => ajustarCantidad(10)}
                   aria-label="Aumentar 10"
                 >+</button>
+
                 <span className="bp-qty-unit">{unidadDisplay}</span>
               </div>
 
-              {/* Preview de kcal en tiempo real */}
               {macrosPreview && (
                 <span className="bp-sel-row__preview" aria-live="polite">
                   {macrosPreview.calorias} kcal
@@ -755,12 +725,12 @@ export default function BuscadorProductos({
               <button
                 className="bp-add-btn"
                 type="button"
-                onClick={handleAgregar}
-                disabled={!cantidad || parseFloat(cantidad) <= 0 || agregando}
-                aria-label={`Agregar ${seleccionado.nombre} a ${comidaLabel}`}
+                onClick={handleInsertar}
+                disabled={!cantidad || parseFloat(cantidad) <= 0 || insertando}
+                aria-label={`Insertar ${seleccionado.nombre} en ${comidaLabel}`}
               >
-                <IcoCheck />
-                {agregando ? 'Agregando…' : 'Agregar'}
+                <IcoInsert />
+                {insertando ? 'Insertando…' : 'Insertar'}
               </button>
             </div>
           )}
@@ -769,14 +739,16 @@ export default function BuscadorProductos({
           {resultados.length > 0 ? (
             <>
               <div className="bp-section-hdr">
-                <span>Resultados{comida ? ` · ${comidaLabel}` : ''}</span>
+                <span>
+                  {comida ? `${comidaLabel} · Alimentos` : 'Alimentos'}
+                </span>
                 <span className="bp-section-hdr__count">{resultados.length}</span>
               </div>
 
               <ul className="bp-list" role="presentation">
                 {resultados.map((prod, idx) => {
                   const isActive = seleccionado?.nombre === prod.nombre
-                  const cat      = prod.categoria ?? prod.categorias?.[0] ?? ''
+                  const cat      = prod.categoria ?? ''
                   return (
                     <li
                       key={prod.id ?? idx}
@@ -792,25 +764,20 @@ export default function BuscadorProductos({
                         }
                       }}
                     >
-                      {/* Ícono emoji */}
                       <div className="bp-item__ico" aria-hidden="true">
                         {emojiCategoria(cat)}
                       </div>
 
-                      {/* Info */}
                       <div className="bp-item__info">
                         <div className="bp-item__name">{prod.nombre}</div>
                         <div className="bp-item__pills">
-                          {cat && (
-                            <span className="bp-pill bp-pill--cat">{cat}</span>
-                          )}
+                          {cat && <span className="bp-pill bp-pill--cat">{cat}</span>}
                           {prod.proteinas     != null && <span className="bp-pill">P {prod.proteinas}g</span>}
                           {prod.carbohidratos != null && <span className="bp-pill">C {prod.carbohidratos}g</span>}
                           {prod.grasas        != null && <span className="bp-pill">G {prod.grasas}g</span>}
                         </div>
                       </div>
 
-                      {/* Calorías */}
                       <div className="bp-item__kcal">
                         {prod.calorias != null ? (
                           <>
@@ -833,7 +800,9 @@ export default function BuscadorProductos({
               <div className="bp-empty" role="status">
                 <span className="bp-empty__ico" aria-hidden="true">🔍</span>
                 <p className="bp-empty__title">Sin resultados para "{query}"</p>
-                <p className="bp-empty__sub">Verificá la ortografía o probá con otro término</p>
+                <p className="bp-empty__sub">
+                  Verificá la ortografía o agregá el alimento al catálogo
+                </p>
               </div>
             )
           )}

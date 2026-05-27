@@ -1,30 +1,53 @@
 /**
- * PlanAlimentario.jsx — Plan nutricional diario por paciente
+ * PlanAlimentario.jsx — Creador de planes alimentarios inteligentes con plantillas
  *
- * Arquitectura visual:
- *   · TabBar     — barra de pestañas 3D con pill indicador deslizante
- *                  El pill se mueve con transform: translateX(${i * 100}%)
- *                  para mantener aceleración hardware en la misma capa GPU
- *   · SlideTrack — contenedor flex de slides; translate3d actualiza en cada cambio de tab
- *                  will-change: transform garantiza rasterización en capa propia
- *   · Cada slide — panel de comida (items + botón agregar)
- *   · AddSheet   — bottom sheet modal con BuscadorProductos flotante blur
- *   · DateNav    — navegador de fecha (día anterior / siguiente)
- *   · MacroBar   — barra resumen de macros del día activo
+ * ── Arquitectura visual ──────────────────────────────────────────────────────
  *
- * Persistencia: tabla `planes` (Dexie v3)
- *   PK: UUID (genId)  |  Índice: [pacienteId+fecha]
- *   Estructura comidas: { desayuno: [...], almuerzo: [...], merienda: [...], cena: [...], snack: [...] }
- *   Cada item: { id, productoId, nombre, cantidad, unidad, calorias, proteinas, carbohidratos, grasas }
+ *  TabBar 3D
+ *    · Pill indicador deslizante: translate3d(calc(i × 100%), 0, 0)
+ *    · Contenedor "hundido" con inset box-shadow → profundidad 3D
+ *    · Pill "elevado" con sombra → efecto raised card
  *
- * Touch/swipe: detecta deslizamiento horizontal > 50 px para cambiar de tab
+ *  SlideTrack (desplazamiento horizontal)
+ *    · overflow:hidden en .pa-viewport recorta el track
+ *    · perspective(1200px) en el viewport da profundidad sutil
+ *    · Track: display:flex + will-change:transform + backface-visibility:hidden
+ *    · Transición: translate3d(calc(-i × 100%), 0, 0) con cubic-bezier 400 ms
+ *    · Cada slide ocupa exactamente width:100% del viewport (flex-shrink:0)
+ *
+ *  BuscadorProductos flotante
+ *    · Renderizado sólo en las 4 pestañas de comidas (no en Indicaciones)
+ *    · Panel de resultados con backdrop-filter:blur(8px)
+ *    · onAgregar → inserta texto formateado en el textarea al cursor activo
+ *
+ *  Sistema de Plantillas
+ *    · "Guardar como Plantilla" → inline input de nombre → db.plantillas.add()
+ *    · "Cargar desde Plantilla" → <select> reactivo sobre liveQuery(plantillas)
+ *    · Al seleccionar: todos los textareas se rellenan inmediatamente (reactivo)
+ *
+ *  Persistencia offline-first
+ *    · Plan del día: tabla `planes` (Dexie v2), PK UUID, índice [pacienteId+fecha]
+ *    · Estructura de datos plana: desayuno, almuerzo, merienda, cena, indicaciones (strings)
+ *    · Compatibilidad con formato antiguo comidas[]:Array → convierte a texto
+ *    · Al guardar: db.planes.put() + queueSyncTask('planes', 'UPDATE'|'CREATE', ...)
+ *
+ *  GPU Budget
+ *    · will-change:transform solo en .pa-track y .pa-tab-pill
+ *    · backface-visibility:hidden en .pa-track → sin flickering en Safari/iOS
+ *    · translate3d (no translateX) para forzar hardware acceleration en todos los browsers
  *
  * Props:
- *   pacienteId   {string}  UUID del paciente (requerido)
- *   fechaInicial {string}  'YYYY-MM-DD' — opcional, default: hoy
+ *   pacienteId {string}  UUID del paciente (requerido)
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+  useSyncExternalStore,
+} from 'react'
 import { liveQuery } from 'dexie'
 import { db, genId, queueSyncTask } from '@/db/database'
 import BuscadorProductos from './BuscadorProductos'
@@ -33,23 +56,69 @@ import BuscadorProductos from './BuscadorProductos'
 // CONSTANTES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Las 5 pestañas del plan — 4 comidas + indicaciones */
 const TABS = [
-  { id: 'desayuno', label: 'Desayuno', emoji: '☀️',  color: '#FF8F00' },
-  { id: 'almuerzo', label: 'Almuerzo', emoji: '🍽️',  color: '#2E7D32' },
-  { id: 'merienda', label: 'Merienda', emoji: '☕',   color: '#7B1FA2' },
-  { id: 'cena',     label: 'Cena',     emoji: '🌙',   color: '#1565C0' },
-  { id: 'snack',    label: 'Snack',    emoji: '🍎',   color: '#C62828' },
+  {
+    id:          'desayuno',
+    label:       'Desayuno',
+    emoji:       '☀️',
+    color:       '#FF8F00',
+    placeholder: 'Describí los alimentos del desayuno…\nEj: • Avena con banana (50g)\n    • Leche descremada (200ml)',
+    esMeal:      true,
+  },
+  {
+    id:          'almuerzo',
+    label:       'Almuerzo',
+    emoji:       '🍽️',
+    color:       '#2E7D32',
+    placeholder: 'Describí los alimentos del almuerzo…\nEj: • Pechuga de pollo (150g)\n    • Arroz integral (100g)\n    • Ensalada mixta',
+    esMeal:      true,
+  },
+  {
+    id:          'merienda',
+    label:       'Merienda',
+    emoji:       '☕',
+    color:       '#7B1FA2',
+    placeholder: 'Describí los alimentos de la merienda…\nEj: • Yogur griego (150g)\n    • Frutos secos (30g)',
+    esMeal:      true,
+  },
+  {
+    id:          'cena',
+    label:       'Cena',
+    emoji:       '🌙',
+    color:       '#1565C0',
+    placeholder: 'Describí los alimentos de la cena…\nEj: • Salmón al horno (180g)\n    • Vegetales salteados (200g)',
+    esMeal:      true,
+  },
+  {
+    id:          'indicaciones',
+    label:       'Indicaciones',
+    emoji:       '📋',
+    color:       '#00695C',
+    placeholder: 'Consejos nutricionales, indicaciones generales…\nEj: • Beber mínimo 2 litros de agua por día\n    • Evitar azúcares refinados\n    • Masticar despacio cada comida',
+    esMeal:      false,
+  },
 ]
-const N = TABS.length
 
-const EMPTY_COMIDAS = () => Object.fromEntries(TABS.map(t => [t.id, []]))
+const N_TABS   = TABS.length          // 5
+const hoy      = () => new Date().toISOString().slice(0, 10)
+const EMPTY_CAMPOS = () => ({
+  desayuno:     '',
+  almuerzo:     '',
+  merienda:     '',
+  cena:         '',
+  indicaciones: '',
+})
 
-const hoy = () => new Date().toISOString().slice(0, 10)
+// ─── Helpers de fecha ────────────────────────────────────────────────────────
 
 function isoToHuman(iso) {
   if (!iso) return ''
-  const d = new Date(iso + 'T12:00:00')
-  return d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
+  return new Date(iso + 'T12:00:00').toLocaleDateString('es-AR', {
+    weekday: 'long',
+    day:     'numeric',
+    month:   'long',
+  })
 }
 
 function shiftDay(iso, delta) {
@@ -58,24 +127,73 @@ function shiftDay(iso, delta) {
   return d.toISOString().slice(0, 10)
 }
 
-function fmtMacro(v) { return Math.round(v * 10) / 10 }
+// ─── Compatibilidad con plan formato antiguo (comidas: {id:[...items]}) ────
+
+/**
+ * Convierte el array de items del formato antiguo a texto plano.
+ * Así los planes ya guardados no aparecen vacíos.
+ */
+function itemsToText(items) {
+  if (!Array.isArray(items) || !items.length) return ''
+  return items
+    .map(it => `• ${it.nombre}${it.cantidad ? ` (${it.cantidad}${it.unidad ?? 'g'})` : ''}${it.calorias ? ` — ${it.calorias} kcal` : ''}`)
+    .join('\n')
+}
+
+/**
+ * Extrae campos de texto de un documento de plan, sea en formato
+ * nuevo (strings planos) o antiguo (comidas: {id: items[]}).
+ */
+function extractCampos(plan) {
+  if (!plan) return EMPTY_CAMPOS()
+  return {
+    desayuno:     plan.desayuno     ?? itemsToText(plan.comidas?.desayuno),
+    almuerzo:     plan.almuerzo     ?? itemsToText(plan.comidas?.almuerzo),
+    merienda:     plan.merienda     ?? itemsToText(plan.comidas?.merienda),
+    cena:         plan.cena         ?? itemsToText(plan.comidas?.cena),
+    indicaciones: plan.indicaciones ?? '',
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CSS — inyectado una sola vez
+// HOOK: useDexieLive — liveQuery ↔ useSyncExternalStore (sin dexie-react-hooks)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function useDexieLive(querier, deps, initial) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const obs  = useMemo(() => liveQuery(querier), deps)
+  const snap = useRef(initial)
+
+  return useSyncExternalStore(
+    (notify) => {
+      const sub = obs.subscribe({
+        next:  (v) => { snap.current = v; notify() },
+        error: ()  => notify(),
+      })
+      return () => sub.unsubscribe()
+    },
+    () => snap.current,
+    () => initial,
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSS — inyectado una sola vez; componente autocontenido
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PA_CSS = `
 
-/* ══ Raíz ═════════════════════════════════════════════════════════════════ */
+/* ══ Raíz ════════════════════════════════════════════════════════════════ */
 .pa {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  padding-bottom: var(--space-6);
+  padding-bottom: calc(var(--nav-h) + var(--space-8));
   animation: fade-in var(--transition-normal) both;
+  max-width: 700px;
+  margin-inline: auto;
 }
 
-/* ══ Header con info del paciente + fecha ════════════════════════════════ */
+/* ══ Header — paciente + fecha ═══════════════════════════════════════════ */
 .pa-hdr {
   padding: var(--space-4) var(--space-4) 0;
   display: flex;
@@ -89,8 +207,8 @@ const PA_CSS = `
   gap: var(--space-3);
 }
 .pa-patient-avatar {
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   border-radius: var(--radius-full);
   background: linear-gradient(135deg, var(--color-primary-dark), var(--color-primary-light));
   display: flex;
@@ -100,10 +218,18 @@ const PA_CSS = `
   font-weight: 800;
   color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(46,125,50,.28);
+  box-shadow: 0 4px 14px rgba(46,125,50,.30);
   letter-spacing: -.01em;
+  user-select: none;
 }
-.pa-patient-info { flex: 1; min-width: 0; }
+.pa-patient-info  { flex: 1; min-width: 0; }
+.pa-patient-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
 .pa-patient-name {
   font-size: var(--text-base);
   font-weight: 700;
@@ -111,13 +237,7 @@ const PA_CSS = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.pa-patient-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--color-primary);
+  letter-spacing: -.01em;
 }
 
 /* ── Navegador de fecha ─────────────────────────────────────────────────── */
@@ -145,22 +265,26 @@ const PA_CSS = `
   cursor: pointer;
   flex-shrink: 0;
   transition:
-    background  var(--transition-fast),
-    color       var(--transition-fast),
-    transform   200ms cubic-bezier(.34,1.56,.64,1);
+    background   var(--transition-fast),
+    color        var(--transition-fast),
+    transform    200ms cubic-bezier(.34,1.56,.64,1);
+  -webkit-tap-highlight-color: transparent;
 }
-.pa-date-btn:hover  { background: var(--color-primary-surface); color: var(--color-primary); transform: scale(1.08); }
+.pa-date-btn:hover  {
+  background: var(--color-primary-surface);
+  color: var(--color-primary);
+  transform: scale(1.08);
+}
 .pa-date-btn:active { transform: scale(.92); }
-.pa-date-info { flex: 1; text-align: center; }
-.pa-date-dow {
+.pa-date-info  { flex: 1; text-align: center; }
+.pa-date-dow   {
   font-size: 9px;
   font-weight: 800;
-  text-transform: uppercase;
+  text-transform: capitalize;
   letter-spacing: .09em;
   color: var(--color-primary);
-  text-transform: capitalize;
 }
-.pa-date-full {
+.pa-date-full  {
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text-high);
@@ -173,99 +297,210 @@ const PA_CSS = `
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;
-  color: var(--color-primary-on);
+  color: #fff;
   background: var(--color-primary);
   padding: 1px 8px;
   border-radius: var(--radius-full);
 }
 
-/* ══ Resumen de macros del día ═══════════════════════════════════════════ */
-.pa-macro-bar {
-  margin: var(--space-3) var(--space-4);
-  background: var(--color-surface);
-  border-radius: var(--radius-xl);
-  overflow: hidden;
-  box-shadow:
-    0 2px  4px rgba(0,0,0,.04),
-    0 8px 20px rgba(0,0,0,.06);
-}
-.pa-macro-bar__hdr {
+/* ══ Barra de herramientas (plantillas) ══════════════════════════════════ */
+.pa-toolbar {
+  margin: var(--space-3) var(--space-4) 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
   padding: var(--space-3) var(--space-4);
-  background: linear-gradient(135deg, var(--color-primary-dark) 0%, var(--color-primary) 60%, var(--color-primary-light) 100%);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-divider);
   position: relative;
   overflow: hidden;
 }
-.pa-macro-bar__hdr::before {
+
+/* Acento decorativo */
+.pa-toolbar::before {
   content: '';
   position: absolute;
-  top: -50%;
-  right: -5%;
-  width: 130px;
-  height: 130px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,.12) 0%, transparent 70%);
-  pointer-events: none;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg,
+    var(--color-primary-dark),
+    var(--color-primary-light),
+    var(--color-accent-light),
+    transparent 100%);
 }
-.pa-macro-bar__title {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.85);
+
+/* Select de plantillas */
+.pa-tpl-select-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
-.pa-macro-bar__kcal {
-  font-size: var(--text-xl);
-  font-weight: 900;
-  color: #fff;
-  letter-spacing: -.025em;
-  text-shadow: 0 1px 4px rgba(0,0,0,.20);
+.pa-tpl-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
 }
-.pa-macro-bar__kcal-unit {
+.pa-tpl-select {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-high);
   font-size: var(--text-sm);
   font-weight: 500;
-  opacity: .80;
-  margin-left: 2px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239E9E9E' stroke-width='2.5' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  text-overflow: ellipsis;
 }
-.pa-macro-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  padding: var(--space-3) var(--space-2);
-  gap: 2px;
+.pa-tpl-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(46,125,50,.14);
 }
-.pa-macro-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--space-2) var(--space-1);
-}
-.pa-macro-cell__val {
-  font-size: var(--text-base);
-  font-weight: 800;
-  color: var(--color-text-high);
-  letter-spacing: -.02em;
-}
-.pa-macro-cell__label {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--color-text-low);
-  margin-top: 1px;
+.pa-tpl-select:disabled {
+  opacity: .55;
+  cursor: not-allowed;
 }
 
-/* ══ Barra de tabs 3D ════════════════════════════════════════════════════ */
+/* Botón guardar como plantilla */
+.pa-btn-tpl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-accent);
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color      var(--transition-fast),
+    transform  200ms cubic-bezier(.34,1.56,.64,1);
+  -webkit-tap-highlight-color: transparent;
+}
+.pa-btn-tpl:hover {
+  background: var(--color-accent-surface);
+  transform: scale(1.03) translateY(-1px);
+}
+.pa-btn-tpl:active { transform: scale(.97); }
+
+/* Campo inline para nombre de plantilla */
+.pa-tpl-save-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  animation: fade-in 160ms both;
+}
+.pa-tpl-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-high);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  box-shadow: 0 0 0 3px rgba(46,125,50,.12);
+  outline: none;
+  transition: box-shadow var(--transition-fast);
+}
+.pa-tpl-name-input:focus {
+  box-shadow: 0 0 0 4px rgba(46,125,50,.18);
+}
+.pa-tpl-name-input::placeholder { color: var(--color-text-disabled); }
+
+.pa-tpl-confirm-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  transition:
+    background var(--transition-fast),
+    transform  200ms cubic-bezier(.34,1.56,.64,1),
+    opacity    var(--transition-fast);
+}
+.pa-tpl-confirm-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: scale(1.08);
+}
+.pa-tpl-confirm-btn:disabled { opacity: .40; cursor: not-allowed; }
+
+.pa-tpl-cancel-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-mid);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  transition:
+    background    var(--transition-fast),
+    border-color  var(--transition-fast),
+    color         var(--transition-fast),
+    transform     200ms cubic-bezier(.34,1.56,.64,1);
+}
+.pa-tpl-cancel-btn:hover {
+  background: var(--color-error-surface);
+  border-color: var(--color-error);
+  color: var(--color-error);
+  transform: rotate(90deg);
+}
+
+/* Notificación plantilla guardada */
+.pa-tpl-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-success);
+  animation: fade-in 200ms both;
+  flex-shrink: 0;
+}
+
+/* ══ BARRA DE TABS 3D ═══════════════════════════════════════════════════ */
 
 .pa-tabs-wrap {
-  padding: 0 var(--space-4);
-  margin-bottom: var(--space-1);
+  padding: var(--space-3) var(--space-4) 0;
 }
 
 /*
- * El contenedor de tabs tiene fondo "hundido" para dar profundidad 3D.
- * La pista de indicador flota encima con sombra propia.
+ * Contenedor "hundido" — inset-shadow crea la ilusión de profundidad
+ * en la que las pestañas están recortadas dentro de una cavidad.
  */
 .pa-tabs {
   position: relative;
@@ -273,35 +508,34 @@ const PA_CSS = `
   background: var(--color-surface-raised);
   border-radius: var(--radius-xl);
   padding: 3px;
-  overflow: hidden;
   box-shadow:
-    inset 0 2px 5px rgba(0,0,0,.08),
-    inset 0 1px 2px rgba(0,0,0,.05);
-  /* scroll horizontal en pantallas muy angostas */
+    inset 0 2px 6px rgba(0,0,0,.09),
+    inset 0 1px 2px rgba(0,0,0,.06);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
 .pa-tabs::-webkit-scrollbar { display: none; }
 
 /*
- * INDICADOR DESLIZANTE — pill que se mueve con translate3d.
- * width: 20% porque tenemos 5 tabs iguales.
- * Usa translate3d para activar la misma capa GPU que el track de slides.
+ * PILL INDICADOR — se eleva sobre el track mediante box-shadow.
+ * width = 100% / N_TABS (5 tabs)
+ * translate3d garantiza la aceleración de hardware y la misma capa GPU que el slide-track.
  */
 .pa-tab-pill {
   position: absolute;
   top: 3px;
   bottom: 3px;
   left: 3px;
-  width: calc((100% - 6px) / ${N});
+  width: calc((100% - 6px) / ${N_TABS});
   border-radius: calc(var(--radius-xl) - 3px);
   background: var(--color-surface);
   box-shadow:
-    0 3px  8px rgba(0,0,0,.12),
-    0 1px  3px rgba(0,0,0,.08),
+    0 3px  9px rgba(0,0,0,.13),
+    0 1px  3px rgba(0,0,0,.09),
     inset 0 1px 0 rgba(255,255,255,.80);
-  transition: transform 380ms cubic-bezier(.4, 0, .2, 1);
+  transition: transform 400ms cubic-bezier(.4, 0, .2, 1);
   will-change: transform;
   pointer-events: none;
   z-index: 0;
@@ -309,12 +543,12 @@ const PA_CSS = `
 .dark .pa-tab-pill {
   background: var(--color-surface-raised);
   box-shadow:
-    0 3px  8px rgba(0,0,0,.35),
-    0 1px  3px rgba(0,0,0,.25),
-    inset 0 1px 0 rgba(255,255,255,.08);
+    0 3px  9px rgba(0,0,0,.38),
+    0 1px  3px rgba(0,0,0,.28),
+    inset 0 1px 0 rgba(255,255,255,.06);
 }
 
-/* Cada botón de tab */
+/* Botones de pestaña */
 .pa-tab {
   position: relative;
   z-index: 1;
@@ -333,26 +567,26 @@ const PA_CSS = `
   -webkit-tap-highlight-color: transparent;
   transition: opacity var(--transition-fast);
   white-space: nowrap;
+  user-select: none;
 }
 .pa-tab:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
-
 .pa-tab__emoji {
   font-size: .95rem;
   line-height: 1;
   display: block;
-  transition: transform 250ms cubic-bezier(.34,1.56,.64,1);
+  transition: transform 280ms cubic-bezier(.34,1.56,.64,1);
 }
-.pa-tab--active .pa-tab__emoji { transform: scale(1.14); }
+.pa-tab--active .pa-tab__emoji { transform: scale(1.18); }
 
 .pa-tab__label {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: .01em;
   color: var(--color-text-low);
-  transition: color var(--transition-fast), font-weight var(--transition-fast);
+  transition: color var(--transition-fast);
   line-height: 1;
 }
 .pa-tab--active .pa-tab__label {
@@ -360,39 +594,31 @@ const PA_CSS = `
   color: var(--color-text-high);
 }
 
-.pa-tab__badge {
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--color-text-disabled);
-  line-height: 1;
-  letter-spacing: .01em;
-  transition: color var(--transition-fast);
-}
-.pa-tab--active .pa-tab__badge {
-  color: var(--color-primary);
-}
-
-/* ══ Viewport + Track de slides ══════════════════════════════════════════ */
+/* ══ VIEWPORT + TRACK DE SLIDES ════════════════════════════════════════ */
 
 /*
- * El viewport recorta el track.
- * overflow: hidden impide ver las slides adyacentes.
+ * El viewport recorta el track y aporta perspectiva para la ilusión 3D
+ * durante el desplazamiento.
  */
 .pa-viewport {
   overflow: hidden;
   width: 100%;
-  /* perspective da sutileza de profundidad durante el slide */
-  perspective: 1400px;
+  perspective: 1200px;
+  perspective-origin: 50% 0;
 }
 
 /*
- * El track contiene las N slides en fila.
- * La traducción horizontal cambia con JS vía style inline.
+ * TRACK — el contenedor de los N slides en fila.
  *
- * Claves de performance GPU:
- *   will-change: transform  → el browser crea una capa de composición propia
- *   translate3d(x,0,0)      → fuerza hardware acceleration
- *   backface-visibility: hidden → evita flickering en Safari/iOS
+ * GPU budget:
+ *   will-change:transform          → browser crea una compositor layer propia
+ *   backface-visibility:hidden     → evita flickering en Safari/iOS
+ *   translate3d(x,0,0)             → fuerza hardware acceleration real
+ *
+ * Fórmula: translate3d(calc(-i × 100%), 0, 0)
+ *   · i=0 → 0%   (primer slide alineado al borde izquierdo del viewport)
+ *   · i=1 → -100% (segundo slide desplazado hacia la derecha, oculto)
+ *   · i=N → -N×100%
  */
 .pa-track {
   display: flex;
@@ -400,311 +626,212 @@ const PA_CSS = `
   will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  transition: transform 380ms cubic-bezier(.4, 0, .2, 1);
+  transition: transform 400ms cubic-bezier(.4, 0, .2, 1);
 }
 
-/* Cada slide ocupa exactamente el 100% del viewport */
+/* Cada slide = 100% del ancho del viewport */
 .pa-slide {
   width: 100%;
   flex-shrink: 0;
-  padding: var(--space-3) var(--space-4) var(--space-6);
-  min-height: 260px;
+  padding: var(--space-4) var(--space-4) var(--space-5);
 }
 
-/* ══ Cabecera de cada slide ══════════════════════════════════════════════ */
+/* ── Cabecera del slide ──────────────────────────────────────────────────── */
 .pa-slide-hdr {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
-.pa-slide-title-wrap { display: flex; align-items: center; gap: var(--space-2); }
-.pa-slide-emoji { font-size: 1.4rem; }
+.pa-slide-emoji { font-size: 1.35rem; line-height: 1; }
 .pa-slide-title {
   font-size: var(--text-lg);
   font-weight: 800;
   color: var(--color-text-high);
   letter-spacing: -.02em;
-}
-.pa-slide-kcal {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--color-text-mid);
+  flex: 1;
 }
 
-/* ══ Botón "Agregar alimento" ════════════════════════════════════════════ */
-.pa-btn-add {
+/* ── Contenedor de slide (card elevada) ─────────────────────────────────── */
+.pa-slide-card {
   position: relative;
-  overflow: hidden;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: var(--radius-full);
-  border: none;
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%);
-  color: #fff;
-  font-size: var(--text-sm);
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 3px 10px rgba(46,125,50,.28);
-  transition:
-    transform   230ms cubic-bezier(.34,1.56,.64,1),
-    box-shadow  230ms ease;
-  white-space: nowrap;
-}
-.pa-btn-add::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.16) 50%,rgba(255,255,255,0) 100%);
-  opacity: 0;
-  transition: opacity 200ms;
-}
-.pa-btn-add:hover { transform: scale(1.04) translateY(-1px); box-shadow: 0 7px 18px rgba(46,125,50,.36); }
-.pa-btn-add:hover::after { opacity: 1; }
-.pa-btn-add:active { transform: scale(.97); }
-
-/* ══ Lista de alimentos en cada slide ════════════════════════════════════ */
-.pa-items { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
-
-.pa-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-3);
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 1px 3px rgba(0,0,0,.04),
-    0 4px 10px rgba(0,0,0,.05);
-  transition: box-shadow 200ms ease, transform 200ms ease;
-  animation: fade-in 200ms both;
-}
-.pa-item:hover {
-  box-shadow:
-    0 2px 6px rgba(0,0,0,.06),
-    0 8px 18px rgba(0,0,0,.08);
-  transform: translateY(-1px);
-}
-
-.pa-item__ico {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-md);
-  background: var(--color-primary-surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.15rem;
-  flex-shrink: 0;
-}
-
-.pa-item__info { flex: 1; min-width: 0; }
-.pa-item__name {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--color-text-high);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 2px;
-}
-.pa-item__qty {
-  font-size: 11px;
-  color: var(--color-text-low);
-  font-weight: 500;
-}
-
-.pa-item__macros {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.pa-item__kcal {
-  font-size: var(--text-sm);
-  font-weight: 800;
-  color: var(--color-primary);
-  letter-spacing: -.01em;
-}
-.pa-item__macro-row {
-  display: flex;
-  gap: 3px;
-}
-.pa-mpill {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-raised);
-  color: var(--color-text-mid);
-}
-
-.pa-item__del {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-full);
-  border: 1.5px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-low);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    background var(--transition-fast),
-    color      var(--transition-fast),
-    border-color var(--transition-fast),
-    transform 200ms cubic-bezier(.34,1.56,.64,1);
-}
-.pa-item__del:hover {
-  background: var(--color-error-surface);
-  color: var(--color-error);
-  border-color: var(--color-error);
-  transform: scale(1.08);
-}
-
-/* Estado vacío del slide */
-.pa-slide-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-8) var(--space-4);
-  text-align: center;
   background: var(--color-surface);
   border-radius: var(--radius-xl);
-  border: 2px dashed var(--color-border);
-  margin-bottom: var(--space-3);
-  transition: border-color var(--transition-fast), background var(--transition-fast);
-}
-.pa-slide-empty__ico { font-size: 2rem; display: block; margin-bottom: var(--space-2); }
-.pa-slide-empty__text {
-  font-size: var(--text-sm);
-  color: var(--color-text-low);
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-/* ══ Bottom Sheet — buscador de alimentos ════════════════════════════════ */
-.pa-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.48);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  animation: pa-fade 200ms ease both;
-}
-@media (min-width: 600px) {
-  .pa-sheet-backdrop {
-    align-items: center;
-    padding: var(--space-4);
-  }
-}
-@keyframes pa-fade { from { opacity: 0; } to { opacity: 1; } }
-
-.pa-sheet {
-  background: var(--color-surface);
-  width: 100%;
-  max-width: 540px;
-  max-height: 85vh;
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  padding: var(--space-4) var(--space-4) var(--space-6);
+  padding: var(--space-4);
   box-shadow:
-    0 -4px 20px rgba(0,0,0,.08),
-    0 -24px 60px rgba(0,0,0,.14);
-  animation: pa-sheet-up 300ms cubic-bezier(.34,1.15,.64,1) both;
+    var(--shadow-md),
+    0 0 0 1px rgba(0,0,0,.03);
+  border: 1px solid var(--color-divider);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  overflow-y: auto;
-}
-@media (min-width: 600px) {
-  .pa-sheet {
-    border-radius: var(--radius-xl);
-    animation: pa-scale-in 280ms cubic-bezier(.34,1.15,.64,1) both;
-  }
-}
-@keyframes pa-sheet-up {
-  from { opacity: 0; transform: translateY(52px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes pa-scale-in {
-  from { opacity: 0; transform: scale(.96) translateY(10px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
+  gap: var(--space-3);
+  overflow: visible;
 }
 
-.pa-sheet__handle {
-  width: 40px;
-  height: 4px;
-  background: var(--color-border);
-  border-radius: var(--radius-full);
-  margin: 0 auto;
-  flex-shrink: 0;
-}
-@media (min-width: 600px) { .pa-sheet__handle { display: none; } }
-
-.pa-sheet__title {
-  font-size: var(--text-xl);
-  font-weight: 900;
-  letter-spacing: -.025em;
-  color: var(--color-text-high);
-  flex-shrink: 0;
-}
-.pa-sheet__subtitle {
-  font-size: var(--text-sm);
-  color: var(--color-text-mid);
-  font-weight: 500;
-  margin-top: 2px;
-}
-
-.pa-sheet__close {
+/* Acento cromático por tab en el borde superior */
+.pa-slide-card::before {
+  content: '';
   position: absolute;
-  top: var(--space-4);
-  right: var(--space-4);
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-full);
-  border: 1.5px solid var(--color-border);
-  background: transparent;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--_tab-color, var(--color-primary));
+}
+
+/* ── Textarea de la comida ───────────────────────────────────────────────── */
+.pa-slide-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
   color: var(--color-text-mid);
+  user-select: none;
   display: flex;
   align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  gap: var(--space-1);
 }
-.pa-sheet__close:hover { background: var(--color-surface-raised); color: var(--color-text-high); }
 
-/* ══ Loading overlay ═════════════════════════════════════════════════════ */
+.pa-slide-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  color: var(--color-text-high);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.75;
+  -webkit-appearance: none;
+  appearance: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow   var(--transition-fast),
+    background   var(--transition-fast);
+}
+.pa-slide-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(46,125,50,.14);
+  background: var(--color-surface);
+}
+.pa-slide-textarea::placeholder {
+  color: var(--color-text-disabled);
+  font-style: italic;
+  line-height: 1.65;
+}
+
+/* Animación de flash al cargar desde plantilla */
+@keyframes pa-campo-flash {
+  0%   { background: rgba(76,175,80,.12); border-color: var(--color-primary-light); }
+  60%  { background: rgba(76,175,80,.06); border-color: var(--color-primary-light); }
+  100% { background: var(--color-bg);     border-color: var(--color-border); }
+}
+.pa-slide-textarea--flashed {
+  animation: pa-campo-flash 900ms ease both;
+}
+
+/* ── Separador entre buscador y textarea ───────────────────────────────── */
+.pa-bp-divider {
+  height: 1px;
+  background: var(--color-divider);
+  margin: 0;
+}
+.pa-bp-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--color-text-low);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ══ Footer — guardar plan ═══════════════════════════════════════════════ */
+.pa-footer {
+  margin: var(--space-3) var(--space-4) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.pa-btn-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-7);
+  background: linear-gradient(135deg,
+    var(--color-primary-dark) 0%,
+    var(--color-primary)      50%,
+    var(--color-primary-light) 100%);
+  background-size: 200% 100%;
+  background-position: 0% center;
+  color: #fff;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: -.01em;
+  box-shadow:
+    0 4px 16px rgba(46,125,50,.38),
+    0 2px  6px rgba(0,0,0,.12);
+  transition:
+    background-position 350ms ease,
+    transform           var(--transition-fast),
+    box-shadow          var(--transition-fast),
+    opacity             var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+.pa-btn-save:hover:not(:disabled) {
+  background-position: 100% center;
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 28px rgba(46,125,50,.48),
+    0 4px 12px rgba(0,0,0,.15);
+}
+.pa-btn-save:active:not(:disabled) {
+  transform: translateY(0) scale(.99);
+}
+.pa-btn-save:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.pa-saved-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-success);
+  animation: fade-in 200ms both;
+}
+
+/* ══ Loading state ════════════════════════════════════════════════════════ */
 .pa-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-10);
-  color: var(--color-text-low);
-  font-size: var(--text-sm);
-  gap: var(--space-3);
+  padding: var(--space-12);
+  gap: var(--space-2);
 }
 .pa-loading-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--color-primary-light);
-  animation: pa-pulse 1.2s ease-in-out infinite;
+  animation: pa-bounce 1.2s ease-in-out infinite;
 }
 .pa-loading-dot:nth-child(2) { animation-delay: .2s; }
 .pa-loading-dot:nth-child(3) { animation-delay: .4s; }
-@keyframes pa-pulse {
+@keyframes pa-bounce {
   0%, 80%, 100% { transform: scale(.75); opacity: .4; }
-  40%           { transform: scale(1);   opacity: 1; }
+  40%           { transform: scale(1);   opacity: 1;  }
 }
 
 /* ══ Sin paciente ════════════════════════════════════════════════════════ */
@@ -713,354 +840,381 @@ const PA_CSS = `
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--space-12) var(--space-6);
+  padding: var(--space-16) var(--space-6);
   text-align: center;
   gap: var(--space-3);
   color: var(--color-text-low);
 }
-.pa-no-patient__ico { font-size: 3rem; }
-.pa-no-patient__text { font-size: var(--text-sm); font-weight: 500; }
+.pa-no-patient__ico  { font-size: 3.5rem; }
+.pa-no-patient__text { font-size: var(--text-sm); font-weight: 500; max-width: 300px; line-height: 1.6; }
 `
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HOOK: useLiveQuery (patrón Dexie — idéntico al de AgendaTurnos)
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Inyector de estilos ─────────────────────────────────────────────────────
 
-function useLiveQuery(queryFn, deps) {
-  const [result,  setResult]  = useState(undefined)
-  const [loading, setLoading] = useState(true)
-  const unmounted = useRef(false)
-
-  useEffect(() => {
-    unmounted.current = false
-    setLoading(true)
-    let sub
-    try {
-      sub = liveQuery(queryFn).subscribe({
-        next:  v => {
-          if (!unmounted.current) {
-            setResult(v ?? null)   // normaliza undefined → null
-            setLoading(false)
-          }
-        },
-        error: e => {
-          console.error('[PlanAlimentario liveQuery]', e)
-          if (!unmounted.current) setLoading(false)
-        },
-      })
-    } catch (e) {
-      console.error('[PlanAlimentario liveQuery setup]', e)
-      if (!unmounted.current) setLoading(false)
-    }
-    return () => {
-      unmounted.current = true
-      sub?.unsubscribe()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-
-  return [result, loading]
+function injectStyles() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById('pa-styles-v2')) return
+  const el = document.createElement('style')
+  el.id          = 'pa-styles-v2'
+  el.textContent = PA_CSS
+  document.head.appendChild(el)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ÍCONOS SVG
+// ÍCONOS SVG INLINE
 // ═══════════════════════════════════════════════════════════════════════════
 
 const IcoLeft = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
     <polyline points="15 18 9 12 15 6"/>
   </svg>
 )
 const IcoRight = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
     <polyline points="9 18 15 12 9 6"/>
   </svg>
 )
-const IcoPlus = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
-    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+const IcoSave = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+    <polyline points="17 21 17 13 7 13 7 21"/>
+    <polyline points="7 3 7 8 15 8"/>
   </svg>
 )
-const IcoTrash = () => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="3 6 5 6 21 6"/>
-    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+const IcoCheck = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+)
+const IcoSpinner = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+       style={{ animation: 'spin 0.9s linear infinite' }}
+       aria-hidden="true">
+    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
   </svg>
 )
 const IcoX = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"
+       aria-hidden="true">
     <line x1="18" y1="6"  x2="6" y2="18"/>
     <line x1="6"  y1="6" x2="18" y2="18"/>
   </svg>
 )
+const IcoStar = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+  </svg>
+)
+const IcoSearch = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.3" strokeLinecap="round"
+       aria-hidden="true">
+    <circle cx="11" cy="11" r="8"/>
+    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+)
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Iniciales del avatar ──────────────────────────────────────────────────
 
-/** Iniciales para el avatar del paciente */
 function iniciales(nombre = '', apellido = '') {
   return ((nombre[0] ?? '') + (apellido[0] ?? '')).toUpperCase() || '🥗'
-}
-
-/** Emoji representativo del tipo de alimento */
-function emojiAlimento(nombre = '') {
-  const n = nombre.toLowerCase()
-  if (n.includes('pollo') || n.includes('pechuga'))   return '🍗'
-  if (n.includes('carne') || n.includes('bife'))       return '🥩'
-  if (n.includes('pescado') || n.includes('atún'))     return '🐟'
-  if (n.includes('huevo'))                             return '🥚'
-  if (n.includes('arroz') || n.includes('pasta'))      return '🍚'
-  if (n.includes('pan') || n.includes('tostada'))      return '🍞'
-  if (n.includes('leche') || n.includes('yogur'))      return '🥛'
-  if (n.includes('queso'))                             return '🧀'
-  if (n.includes('manzana') || n.includes('naranja'))  return '🍎'
-  if (n.includes('banana') || n.includes('plátano'))   return '🍌'
-  if (n.includes('ensalada') || n.includes('lechuga')) return '🥗'
-  if (n.includes('aceite') || n.includes('manteca'))   return '🫒'
-  if (n.includes('café') || n.includes('té'))          return '☕'
-  if (n.includes('agua') || n.includes('jugo'))        return '🥤'
-  return '🥗'
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENTE: AlimentoItem
-// ═══════════════════════════════════════════════════════════════════════════
-
-function AlimentoItem({ item, onEliminar }) {
-  return (
-    <div className="pa-item">
-      {/* Ícono */}
-      <div className="pa-item__ico" aria-hidden="true">
-        {emojiAlimento(item.nombre)}
-      </div>
-
-      {/* Info */}
-      <div className="pa-item__info">
-        <div className="pa-item__name">{item.nombre}</div>
-        <div className="pa-item__qty">
-          {item.cantidad} {item.unidad ?? 'g'}
-        </div>
-      </div>
-
-      {/* Macros */}
-      <div className="pa-item__macros">
-        {item.calorias != null && (
-          <span className="pa-item__kcal">{fmtMacro(item.calorias)} kcal</span>
-        )}
-        <div className="pa-item__macro-row">
-          {item.proteinas     != null && <span className="pa-mpill">P {fmtMacro(item.proteinas)}g</span>}
-          {item.carbohidratos != null && <span className="pa-mpill">C {fmtMacro(item.carbohidratos)}g</span>}
-          {item.grasas        != null && <span className="pa-mpill">G {fmtMacro(item.grasas)}g</span>}
-        </div>
-      </div>
-
-      {/* Eliminar */}
-      <button
-        className="pa-item__del"
-        onClick={() => onEliminar(item.id)}
-        aria-label={`Eliminar ${item.nombre}`}
-        type="button"
-      >
-        <IcoTrash />
-      </button>
-    </div>
-  )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════
 
-export default function PlanAlimentario({ pacienteId, fechaInicial }) {
-  const [fecha,        setFecha]        = useState(fechaInicial ?? hoy())
-  const [activeTab,    setActiveTab]    = useState(0)
-  const [sheetOpen,    setSheetOpen]    = useState(false)
-  const [saving,       setSaving]       = useState(false)
+export default function PlanAlimentario({ pacienteId }) {
+  // ── Inyección de estilos ──────────────────────────────────────────────
+  useEffect(() => { injectStyles() }, [])
+
+  // ── Estado de UI ──────────────────────────────────────────────────────
+  const [fecha,          setFecha]          = useState(hoy)
+  const [activeTab,      setActiveTab]      = useState(0)
+  const [guardando,      setGuardando]      = useState(false)
+  const [savedOk,        setSavedOk]        = useState(false)
+
+  // Template: guardar
+  const [showTplInput,   setShowTplInput]   = useState(false)
+  const [tplNombre,      setTplNombre]      = useState('')
+  const [guardandoTpl,   setGuardandoTpl]   = useState(false)
+  const [tplSavedOk,     setTplSavedOk]     = useState(false)
+
+  // Template: cargar
+  const [plantillaId,    setPlantillaId]    = useState('')
+
+  // Estado de flash (animación al cargar plantilla)
+  const [flashKey,       setFlashKey]       = useState(0)
+
+  // ── Campos de texto (fuente de verdad local) ───────────────────────────
+  const [campos, setCampos] = useState(EMPTY_CAMPOS)
+
+  // Refs a los textareas para inserción al cursor
+  const textareaRefs = useRef({})   // { desayuno: <el>, almuerzo: <el>, … }
+  const tplInputRef  = useRef(null)
 
   // Touch swipe
   const touchStartX = useRef(null)
   const touchStartY = useRef(null)
 
-  // ── Inyección de CSS ────────────────────────────────────────────────────
-  useEffect(() => {
-    const ID = 'pa-styles'
-    if (document.getElementById(ID)) return
-    const el = document.createElement('style')
-    el.id   = ID
-    el.textContent = PA_CSS
-    document.head.appendChild(el)
-  }, [])
+  // Ref para evitar que liveQuery sobreescriba ediciones del usuario
+  const lastLoadedKey = useRef('')
 
   // ── Queries reactivas Dexie ────────────────────────────────────────────
-  const [plan, planLoading] = useLiveQuery(
-    () => db.planes
-      .where('[pacienteId+fecha]')
-      .equals([pacienteId, fecha])
-      .first(),
-    [pacienteId, fecha]
+
+  /** Plantillas guardadas — se actualiza en tiempo real */
+  const plantillas = useDexieLive(
+    () => db.plantillas.toArray(),
+    [],
+    [],
   )
 
-  const [paciente] = useLiveQuery(
+  /** Datos del paciente — nombre, apellido */
+  const paciente = useDexieLive(
     () => pacienteId ? db.pacientes.get(pacienteId) : Promise.resolve(null),
-    [pacienteId]
+    [pacienteId],
+    null,
   )
 
-  // ── Datos derivados ─────────────────────────────────────────────────────
-  const comidas = useMemo(() => ({
-    ...EMPTY_COMIDAS(),
-    ...(plan?.comidas ?? {}),
-  }), [plan])
+  // ── Carga del plan del día desde Dexie (imperativa, no reactiva) ──────
+  // Usamos efecto imperativo para evitar que liveQuery sobreescriba los
+  // cambios no guardados del profesional mientras edita.
 
-  // Totales por comida
-  const totalesPorTab = useMemo(() =>
-    TABS.map(t => {
-      const items = comidas[t.id] ?? []
-      return items.reduce((acc, item) => ({
-        calorias:      acc.calorias      + (item.calorias      ?? 0),
-        proteinas:     acc.proteinas     + (item.proteinas     ?? 0),
-        carbohidratos: acc.carbohidratos + (item.carbohidratos ?? 0),
-        grasas:        acc.grasas        + (item.grasas        ?? 0),
-      }), { calorias: 0, proteinas: 0, carbohidratos: 0, grasas: 0 })
-    }),
-  [comidas])
+  const [planLoading, setPlanLoading] = useState(false)
 
-  // Totales del día
-  const totalesDay = useMemo(() =>
-    totalesPorTab.reduce((acc, t) => ({
-      calorias:      acc.calorias      + t.calorias,
-      proteinas:     acc.proteinas     + t.proteinas,
-      carbohidratos: acc.carbohidratos + t.carbohidratos,
-      grasas:        acc.grasas        + t.grasas,
-    }), { calorias: 0, proteinas: 0, carbohidratos: 0, grasas: 0 }),
-  [totalesPorTab])
+  useEffect(() => {
+    if (!pacienteId) return
 
-  // ── Helpers de persistencia ────────────────────────────────────────────
+    let cancelled = false
+    const clave   = `${pacienteId}|${fecha}`
 
-  /** Obtiene el plan existente o crea uno nuevo */
-  async function obtenerOCrearPlan() {
-    // Leemos directamente de Dexie para evitar race condition con el state
-    const existing = await db.planes
+    // Evitar recargar si ya cargamos esta combinación
+    if (lastLoadedKey.current === clave) return
+
+    setPlanLoading(true)
+    setCampos(EMPTY_CAMPOS())
+
+    db.planes
       .where('[pacienteId+fecha]')
       .equals([pacienteId, fecha])
       .first()
-    if (existing) return existing
-
-    const nuevo = {
-      id:           genId(),
-      pacienteId,
-      fecha,
-      comidas:      EMPTY_COMIDAS(),
-      sincronizado: 0,
-      creadoEn:     new Date().toISOString(),
-    }
-    await db.planes.add(nuevo)
-    await queueSyncTask('planes', 'CREATE', nuevo)
-    return nuevo
-  }
-
-  /** Agrega un alimento a la comida activa */
-  async function handleAgregar(item) {
-    if (!pacienteId) return
-    setSaving(true)
-    try {
-      const planDoc = await obtenerOCrearPlan()
-      const nuevasComidas = {
-        ...EMPTY_COMIDAS(),
-        ...(planDoc.comidas ?? {}),
-      }
-      const comidaId = TABS[activeTab].id
-      nuevasComidas[comidaId] = [
-        ...(nuevasComidas[comidaId] ?? []),
-        { ...item, id: genId(), agregadoEn: new Date().toISOString() },
-      ]
-      await db.planes.update(planDoc.id, {
-        comidas:      nuevasComidas,
-        sincronizado: 0,
-        actualizadoEn: new Date().toISOString(),
+      .then((plan) => {
+        if (cancelled) return
+        lastLoadedKey.current = clave
+        setCampos(extractCampos(plan))
       })
-      await queueSyncTask('planes', 'UPDATE', { id: planDoc.id, comidas: nuevasComidas })
-      setSheetOpen(false)
-    } catch (err) {
-      console.error('[PlanAlimentario] Error al agregar alimento:', err)
-    } finally {
-      setSaving(false)
-    }
-  }
+      .catch((err) => console.error('[PlanAlimentario] Error cargando plan:', err))
+      .finally(() => { if (!cancelled) setPlanLoading(false) })
 
-  /** Elimina un alimento de una comida */
-  async function handleEliminar(comidaId, itemId) {
-    if (!plan) return
-    const nuevasComidas = {
-      ...EMPTY_COMIDAS(),
-      ...(plan.comidas ?? {}),
-    }
-    nuevasComidas[comidaId] = (nuevasComidas[comidaId] ?? []).filter(i => i.id !== itemId)
-    await db.planes.update(plan.id, {
-      comidas:      nuevasComidas,
-      sincronizado: 0,
-      actualizadoEn: new Date().toISOString(),
-    })
-    await queueSyncTask('planes', 'UPDATE', { id: plan.id, comidas: nuevasComidas })
-  }
+    return () => { cancelled = true }
+  }, [pacienteId, fecha])
 
-  // ── Navegación de fecha ─────────────────────────────────────────────────
-  const goPrev = useCallback(() => setFecha(f => shiftDay(f, -1)), [])
-  const goNext = useCallback(() => setFecha(f => shiftDay(f, +1)), [])
-  const goHoy  = useCallback(() => setFecha(hoy()), [])
+  // Resetear clave al cambiar paciente o fecha
+  useEffect(() => {
+    lastLoadedKey.current = ''
+  }, [pacienteId, fecha])
 
-  // ── Cambio de tab ────────────────────────────────────────────────────────
-  const goTab = useCallback((idx) => {
-    setActiveTab(idx)
+  // ── Handler de cambio en textareas ────────────────────────────────────
+  const handleCampoChange = useCallback((tabId, value) => {
+    setCampos(prev => ({ ...prev, [tabId]: value }))
+    setSavedOk(false)
   }, [])
 
-  // ── Touch / swipe horizontal ─────────────────────────────────────────────
+  // ── Insertar producto desde BuscadorProductos ──────────────────────────
+  /**
+   * Formatea un item del buscador como línea de texto y lo inserta
+   * en el textarea de la pestaña activa, en la posición del cursor.
+   */
+  const handleInsertarProducto = useCallback((item, tabId) => {
+    const partes = [
+      `• ${item.nombre}`,
+      `(${item.cantidad}${item.unidad ?? 'g'})`,
+    ]
+    if (item.calorias) partes.push(`— ${item.calorias} kcal`)
+    if (item.proteinas || item.carbohidratos || item.grasas) {
+      const macros = []
+      if (item.proteinas     != null) macros.push(`P:${item.proteinas}g`)
+      if (item.carbohidratos != null) macros.push(`C:${item.carbohidratos}g`)
+      if (item.grasas        != null) macros.push(`G:${item.grasas}g`)
+      partes.push(`[${macros.join(' ')}]`)
+    }
+    const linea = partes.join(' ') + '\n'
+
+    const ref = textareaRefs.current[tabId]
+    if (ref) {
+      const start = ref.selectionStart ?? ref.value.length
+      const end   = ref.selectionEnd   ?? ref.value.length
+      const val   = campos[tabId] ?? ''
+      const nuevo = val.substring(0, start) + linea + val.substring(end)
+      setCampos(prev => ({ ...prev, [tabId]: nuevo }))
+      setSavedOk(false)
+      // Restaurar cursor tras el texto insertado
+      requestAnimationFrame(() => {
+        ref.focus()
+        ref.setSelectionRange(start + linea.length, start + linea.length)
+      })
+    } else {
+      setCampos(prev => ({ ...prev, [tabId]: (prev[tabId] ?? '') + linea }))
+      setSavedOk(false)
+    }
+  }, [campos])
+
+  // ── Guardar como plantilla ─────────────────────────────────────────────
+  const handleGuardarPlantilla = useCallback(async () => {
+    if (!tplNombre.trim() || guardandoTpl) return
+    setGuardandoTpl(true)
+    try {
+      const id = genId()
+      await db.plantillas.add({
+        id,
+        nombre_plantilla: tplNombre.trim(),
+        desayuno:         campos.desayuno     ?? '',
+        almuerzo:         campos.almuerzo     ?? '',
+        merienda:         campos.merienda     ?? '',
+        cena:             campos.cena         ?? '',
+        indicaciones:     campos.indicaciones ?? '',
+        creadoEn:         new Date().toISOString(),
+      })
+      setTplNombre('')
+      setShowTplInput(false)
+      setTplSavedOk(true)
+      setTimeout(() => setTplSavedOk(false), 2800)
+    } catch (err) {
+      console.error('[PlanAlimentario] Error guardando plantilla:', err)
+    } finally {
+      setGuardandoTpl(false)
+    }
+  }, [tplNombre, guardandoTpl, campos])
+
+  // ── Cargar desde plantilla ─────────────────────────────────────────────
+  const handleCargarPlantilla = useCallback((e) => {
+    const id = e.target.value
+    setPlantillaId(id)
+    if (!id) return
+    const plantilla = plantillas.find(p => p.id === id)
+    if (!plantilla) return
+    // Rellenar todos los campos de forma reactiva
+    setCampos({
+      desayuno:     plantilla.desayuno     ?? '',
+      almuerzo:     plantilla.almuerzo     ?? '',
+      merienda:     plantilla.merienda     ?? '',
+      cena:         plantilla.cena         ?? '',
+      indicaciones: plantilla.indicaciones ?? '',
+    })
+    setSavedOk(false)
+    // Disparar animación de flash en los textareas
+    setFlashKey(k => k + 1)
+  }, [plantillas])
+
+  // ── Guardar plan del paciente ──────────────────────────────────────────
+  const handleGuardarPlan = useCallback(async () => {
+    if (!pacienteId || guardando) return
+    setGuardando(true)
+    setSavedOk(false)
+    try {
+      const existing = await db.planes
+        .where('[pacienteId+fecha]')
+        .equals([pacienteId, fecha])
+        .first()
+
+      const payload = {
+        pacienteId,
+        fecha,
+        desayuno:      campos.desayuno     ?? '',
+        almuerzo:      campos.almuerzo     ?? '',
+        merienda:      campos.merienda     ?? '',
+        cena:          campos.cena         ?? '',
+        indicaciones:  campos.indicaciones ?? '',
+        sincronizado:  0,
+        actualizadoEn: new Date().toISOString(),
+      }
+
+      if (existing) {
+        await db.planes.update(existing.id, payload)
+        await queueSyncTask('planes', 'UPDATE', { id: existing.id, ...payload })
+        lastLoadedKey.current = `${pacienteId}|${fecha}` // marcar como sincronizado
+      } else {
+        const id = genId()
+        const nuevo = { id, creadoEn: new Date().toISOString(), ...payload }
+        await db.planes.add(nuevo)
+        await queueSyncTask('planes', 'CREATE', nuevo)
+        lastLoadedKey.current = `${pacienteId}|${fecha}`
+      }
+
+      setSavedOk(true)
+      setTimeout(() => setSavedOk(false), 3000)
+    } catch (err) {
+      console.error('[PlanAlimentario] Error al guardar plan:', err)
+    } finally {
+      setGuardando(false)
+    }
+  }, [pacienteId, fecha, campos, guardando])
+
+  // ── Navegación de fecha ────────────────────────────────────────────────
+  const goPrev = useCallback(() => setFecha(f => shiftDay(f, -1)), [])
+  const goNext = useCallback(() => setFecha(f => shiftDay(f, +1)), [])
+
+  // ── Touch / swipe horizontal ───────────────────────────────────────────
   function onTouchStart(e) {
     touchStartX.current = e.touches[0].clientX
     touchStartY.current = e.touches[0].clientY
   }
-
   function onTouchEnd(e) {
     if (touchStartX.current === null) return
     const dx = e.changedTouches[0].clientX - touchStartX.current
     const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current)
-    // Solo swipe si el movimiento horizontal supera el vertical y los 50 px
     if (Math.abs(dx) > dy && Math.abs(dx) > 50) {
-      if (dx < 0 && activeTab < N - 1) setActiveTab(t => t + 1)
-      if (dx > 0 && activeTab > 0)     setActiveTab(t => t - 1)
+      if (dx < 0 && activeTab < N_TABS - 1) setActiveTab(t => t + 1)
+      if (dx > 0 && activeTab > 0)          setActiveTab(t => t - 1)
     }
     touchStartX.current = null
     touchStartY.current = null
   }
 
-  // ── Guardias ─────────────────────────────────────────────────────────────
+  // ── Focus en input de plantilla ────────────────────────────────────────
+  useEffect(() => {
+    if (showTplInput) {
+      requestAnimationFrame(() => tplInputRef.current?.focus())
+    }
+  }, [showTplInput])
+
+  // ── Guardia: sin paciente ──────────────────────────────────────────────
   if (!pacienteId) {
     return (
       <section className="pa">
         <div className="pa-no-patient">
           <span className="pa-no-patient__ico" aria-hidden="true">🥗</span>
-          <p className="pa-no-patient__text">Seleccioná un paciente para ver su plan alimentario</p>
+          <p className="pa-no-patient__text">
+            Seleccioná un paciente para ver y editar su plan alimentario
+          </p>
         </div>
       </section>
     )
   }
 
-  // ── Datos de UI ───────────────────────────────────────────────────────────
+  // ── Datos de UI ────────────────────────────────────────────────────────
   const nombreCompleto = [paciente?.nombre, paciente?.apellido].filter(Boolean).join(' ') || 'Paciente'
-  const [diaNombre, ...restoFecha] = isoToHuman(fecha).split(' ')
-  const esHoy = fecha === hoy()
+  const fechaHumana    = isoToHuman(fecha)
+  const [diaNombre, ...restoFecha] = fechaHumana.split(' ')
+  const esHoy          = fecha === hoy()
 
-  const tab = TABS[activeTab]
-
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
     <section className="pa" aria-label={`Plan alimentario — ${nombreCompleto}`}>
 
-      {/* ══ Header ══════════════════════════════════════════════════════ */}
+      {/* ══ HEADER ══════════════════════════════════════════════════════ */}
       <div className="pa-hdr">
 
         {/* Paciente */}
@@ -1075,7 +1229,7 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
         </div>
 
         {/* Navegador de fecha */}
-        <div className="pa-date-nav">
+        <nav className="pa-date-nav" aria-label="Navegar por fecha">
           <button
             className="pa-date-btn"
             onClick={goPrev}
@@ -1088,9 +1242,7 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
           <div className="pa-date-info">
             <div className="pa-date-dow">{diaNombre}</div>
             <div className="pa-date-full">{restoFecha.join(' ')}</div>
-            {esHoy && (
-              <span className="pa-date-today" role="status">Hoy</span>
-            )}
+            {esHoy && <span className="pa-date-today" role="status">Hoy</span>}
           </div>
 
           <button
@@ -1101,40 +1253,106 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
           >
             <IcoRight />
           </button>
-        </div>
+        </nav>
       </div>
 
-      {/* ══ Resumen de macros ════════════════════════════════════════════ */}
-      <div className="pa-macro-bar" role="region" aria-label="Resumen nutricional del día">
-        <div className="pa-macro-bar__hdr">
-          <span className="pa-macro-bar__title">Total del día</span>
-          <span className="pa-macro-bar__kcal" aria-label={`${Math.round(totalesDay.calorias)} kilocalorías`}>
-            {Math.round(totalesDay.calorias)}
-            <span className="pa-macro-bar__kcal-unit">kcal</span>
+      {/* ══ BARRA DE HERRAMIENTAS — PLANTILLAS ══════════════════════════ */}
+      <div className="pa-toolbar" role="toolbar" aria-label="Herramientas de plantilla">
+
+        {/* Selector "Cargar desde Plantilla" */}
+        <div className="pa-tpl-select-wrap">
+          <span className="pa-tpl-icon" aria-hidden="true">📂</span>
+          <select
+            className="pa-tpl-select"
+            value={plantillaId}
+            onChange={handleCargarPlantilla}
+            disabled={!plantillas.length}
+            aria-label="Cargar desde plantilla guardada"
+          >
+            <option value="">
+              {plantillas.length
+                ? `Cargar desde plantilla… (${plantillas.length})`
+                : 'Sin plantillas guardadas'
+              }
+            </option>
+            {plantillas.map(p => (
+              <option key={p.id} value={p.id}>{p.nombre_plantilla}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* ── Guardar como plantilla ── */}
+        {!showTplInput ? (
+          <button
+            className="pa-btn-tpl"
+            onClick={() => { setShowTplInput(true); setTplSavedOk(false) }}
+            type="button"
+            aria-label="Guardar plan actual como plantilla reutilizable"
+          >
+            <IcoStar />
+            <span>Guardar como Plantilla</span>
+          </button>
+        ) : (
+          <div className="pa-tpl-save-row" role="group" aria-label="Nombre de la nueva plantilla">
+            <input
+              ref={tplInputRef}
+              className="pa-tpl-name-input"
+              type="text"
+              value={tplNombre}
+              onChange={e => setTplNombre(e.target.value)}
+              placeholder="Nombre: ej. Plan Keto Inicial…"
+              maxLength={60}
+              aria-label="Nombre de la plantilla"
+              onKeyDown={e => {
+                if (e.key === 'Enter')  handleGuardarPlantilla()
+                if (e.key === 'Escape') { setShowTplInput(false); setTplNombre('') }
+              }}
+            />
+            <button
+              className="pa-tpl-confirm-btn"
+              type="button"
+              onClick={handleGuardarPlantilla}
+              disabled={!tplNombre.trim() || guardandoTpl}
+              aria-label={guardandoTpl ? 'Guardando…' : 'Confirmar nombre y guardar plantilla'}
+              title="Guardar plantilla"
+            >
+              {guardandoTpl ? <IcoSpinner /> : <IcoCheck />}
+            </button>
+            <button
+              className="pa-tpl-cancel-btn"
+              type="button"
+              onClick={() => { setShowTplInput(false); setTplNombre('') }}
+              aria-label="Cancelar"
+              title="Cancelar"
+            >
+              <IcoX />
+            </button>
+          </div>
+        )}
+
+        {/* Confirmación de plantilla guardada */}
+        {tplSavedOk && (
+          <span className="pa-tpl-saved" role="status">
+            <IcoCheck />
+            ¡Plantilla guardada!
           </span>
-        </div>
-        <div className="pa-macro-grid">
-          {[
-            { label: 'Proteínas',   value: totalesDay.proteinas,     unit: 'g' },
-            { label: 'Carbos',      value: totalesDay.carbohidratos, unit: 'g' },
-            { label: 'Grasas',      value: totalesDay.grasas,        unit: 'g' },
-          ].map(({ label, value, unit }) => (
-            <div key={label} className="pa-macro-cell">
-              <span className="pa-macro-cell__val">{fmtMacro(value)}{unit}</span>
-              <span className="pa-macro-cell__label">{label}</span>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
 
-      {/* ══ TAB BAR 3D ══════════════════════════════════════════════════ */}
+      {/* ══ BARRA DE TABS 3D ════════════════════════════════════════════ */}
       <div className="pa-tabs-wrap">
         <div
           className="pa-tabs"
           role="tablist"
-          aria-label="Comidas del día"
+          aria-label="Secciones del plan alimentario"
         >
-          {/* Pill indicador deslizante — accelerado hardware con translate3d */}
+          {/*
+           * PILL INDICADOR
+           * translate3d(calc(i × 100%), 0, 0)
+           *   i=0 → translate3d(0,0,0)   — primer tab
+           *   i=1 → translate3d(100%,0,0) — segundo tab
+           *   etc.
+           */}
           <div
             className="pa-tab-pill"
             aria-hidden="true"
@@ -1143,36 +1361,27 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
             }}
           />
 
-          {TABS.map((t, i) => {
-            const isActive = i === activeTab
-            const kcal     = totalesPorTab[i].calorias
-            return (
-              <button
-                key={t.id}
-                className={`pa-tab${isActive ? ' pa-tab--active' : ''}`}
-                role="tab"
-                aria-selected={isActive}
-                aria-controls={`pa-slide-${t.id}`}
-                id={`pa-tab-${t.id}`}
-                onClick={() => goTab(i)}
-                type="button"
-              >
-                <span className="pa-tab__emoji" aria-hidden="true">{t.emoji}</span>
-                <span className="pa-tab__label">{t.label}</span>
-                {kcal > 0 && (
-                  <span className="pa-tab__badge" aria-label={`${Math.round(kcal)} kcal`}>
-                    {Math.round(kcal)}
-                  </span>
-                )}
-              </button>
-            )
-          })}
+          {TABS.map((tab, i) => (
+            <button
+              key={tab.id}
+              className={`pa-tab${activeTab === i ? ' pa-tab--active' : ''}`}
+              role="tab"
+              aria-selected={activeTab === i}
+              aria-controls={`pa-slide-${tab.id}`}
+              id={`pa-tab-${tab.id}`}
+              onClick={() => setActiveTab(i)}
+              type="button"
+            >
+              <span className="pa-tab__emoji" aria-hidden="true">{tab.emoji}</span>
+              <span className="pa-tab__label">{tab.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       {/* ══ VIEWPORT + TRACK DE SLIDES ══════════════════════════════════ */}
       {planLoading ? (
-        <div className="pa-loading" role="status" aria-live="polite">
+        <div className="pa-loading" role="status" aria-live="polite" aria-label="Cargando plan…">
           <div className="pa-loading-dot" />
           <div className="pa-loading-dot" />
           <div className="pa-loading-dot" />
@@ -1184,9 +1393,15 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
           onTouchEnd={onTouchEnd}
         >
           {/*
-           * TRACK — translate3d activa composición hardware.
-           * Fórmula: -activeTab * 100% = desplaza el track a la izquierda
-           * tantas veces como el índice del tab activo × ancho del viewport.
+           * TRACK: translate3d(calc(-activeTab × 100%), 0, 0)
+           *
+           *   activeTab=0 → translate3d(0,0,0)     → Desayuno visible
+           *   activeTab=1 → translate3d(-100%,0,0)  → Almuerzo visible
+           *   activeTab=2 → translate3d(-200%,0,0)  → Merienda visible
+           *   activeTab=3 → translate3d(-300%,0,0)  → Cena visible
+           *   activeTab=4 → translate3d(-400%,0,0)  → Indicaciones visible
+           *
+           * La transición CSS de 400 ms emula la fluidez de Nutrium.
            */}
           <div
             className="pa-track"
@@ -1194,118 +1409,144 @@ export default function PlanAlimentario({ pacienteId, fechaInicial }) {
               transform: `translate3d(calc(-${activeTab * 100}%), 0, 0)`,
             }}
           >
-            {TABS.map((t, i) => {
-              const items   = comidas[t.id] ?? []
-              const totales = totalesPorTab[i]
-              return (
-                <div
-                  key={t.id}
-                  className="pa-slide"
-                  role="tabpanel"
-                  id={`pa-slide-${t.id}`}
-                  aria-labelledby={`pa-tab-${t.id}`}
-                  aria-hidden={activeTab !== i}
-                  tabIndex={activeTab === i ? 0 : -1}
-                >
-                  {/* Cabecera del slide */}
-                  <div className="pa-slide-hdr">
-                    <div className="pa-slide-title-wrap">
-                      <span className="pa-slide-emoji" aria-hidden="true">{t.emoji}</span>
-                      <span className="pa-slide-title">{t.label}</span>
-                    </div>
-                    {totales.calorias > 0 && (
-                      <span className="pa-slide-kcal" aria-label={`${Math.round(totales.calorias)} kcal en ${t.label}`}>
-                        {Math.round(totales.calorias)} kcal
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Lista de alimentos */}
-                  {items.length > 0 ? (
-                    <div className="pa-items" role="list" aria-label={`Alimentos en ${t.label}`}>
-                      {items.map(item => (
-                        <div key={item.id} role="listitem">
-                          <AlimentoItem
-                            item={item}
-                            onEliminar={(itemId) => handleEliminar(t.id, itemId)}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="pa-slide-empty" aria-label={`Sin alimentos en ${t.label}`}>
-                      <span className="pa-slide-empty__ico" aria-hidden="true">{t.emoji}</span>
-                      <p className="pa-slide-empty__text">
-                        Sin alimentos en {t.label.toLowerCase()}.<br/>
-                        Tocá <strong>Agregar alimento</strong> para comenzar.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Botón agregar — solo se renderiza en el slide activo para evitar traps de foco */}
-                  {activeTab === i && (
-                    <button
-                      className="pa-btn-add"
-                      onClick={() => setSheetOpen(true)}
-                      disabled={saving}
-                      type="button"
-                      aria-label={`Agregar alimento al ${t.label.toLowerCase()}`}
-                    >
-                      <IcoPlus />
-                      Agregar alimento
-                    </button>
-                  )}
-                </div>
-              )
-            })}
+            {TABS.map((tab, i) => (
+              <SlidePanel
+                key={tab.id}
+                tab={tab}
+                isActive={activeTab === i}
+                value={campos[tab.id] ?? ''}
+                flashKey={flashKey}
+                textareaRef={el => { textareaRefs.current[tab.id] = el }}
+                onChange={val => handleCampoChange(tab.id, val)}
+                onInsert={item => handleInsertarProducto(item, tab.id)}
+              />
+            ))}
           </div>
         </div>
       )}
 
-      {/* ══ BOTTOM SHEET — BuscadorProductos ═══════════════════════════ */}
-      {sheetOpen && (
-        <div
-          className="pa-sheet-backdrop"
-          onClick={e => { if (e.target === e.currentTarget) setSheetOpen(false) }}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Agregar alimento al ${tab.label.toLowerCase()} de ${nombreCompleto}`}
+      {/* ══ FOOTER — Guardar plan ════════════════════════════════════════ */}
+      <footer className="pa-footer">
+        <button
+          className="pa-btn-save"
+          onClick={handleGuardarPlan}
+          disabled={guardando}
+          type="button"
+          aria-label={`Guardar plan alimentario de ${nombreCompleto} del ${fechaHumana}`}
         >
-          <div className="pa-sheet" style={{ position: 'relative' }}>
-            {/* Handle (mobile) */}
-            <div className="pa-sheet__handle" aria-hidden="true" />
+          {guardando ? (
+            <><IcoSpinner /><span>Guardando…</span></>
+          ) : (
+            <><IcoSave /><span>Guardar Plan</span></>
+          )}
+        </button>
 
-            {/* Botón cerrar */}
-            <button
-              className="pa-sheet__close"
-              onClick={() => setSheetOpen(false)}
-              aria-label="Cerrar buscador"
-              type="button"
-            >
-              <IcoX />
-            </button>
+        {savedOk && (
+          <span className="pa-saved-notice" role="status">
+            <IcoCheck />
+            Guardado localmente · en cola de sync
+          </span>
+        )}
+      </footer>
 
-            {/* Título */}
-            <div>
-              <h2 className="pa-sheet__title">
-                {tab.emoji} Agregar a {tab.label}
-              </h2>
-              <p className="pa-sheet__subtitle">
-                {nombreCompleto} · {isoToHuman(fecha)}
-              </p>
+    </section>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SlidePanel — panel individual de cada pestaña
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Renderiza el contenido de una pestaña:
+ *   · Textarea de texto libre para la comida / indicaciones
+ *   · BuscadorProductos flotante (solo en tabs de comidas, no indicaciones)
+ *
+ * Recibe `isActive` para condicionar el renderizado del buscador
+ * (evita paneles flotantes huérfanos en slides ocultos).
+ */
+function SlidePanel({ tab, isActive, value, flashKey, textareaRef, onChange, onInsert }) {
+  // Clave de flash — cuando cambia, la animación se reinicia
+  const [flashed, setFlashed] = useState(false)
+  const prevFlashKey = useRef(flashKey)
+
+  useEffect(() => {
+    if (flashKey !== prevFlashKey.current) {
+      prevFlashKey.current = flashKey
+      setFlashed(true)
+      const t = setTimeout(() => setFlashed(false), 950)
+      return () => clearTimeout(t)
+    }
+  }, [flashKey])
+
+  return (
+    <article
+      className="pa-slide"
+      role="tabpanel"
+      id={`pa-slide-${tab.id}`}
+      aria-labelledby={`pa-tab-${tab.id}`}
+      aria-hidden={!isActive}
+      tabIndex={isActive ? 0 : -1}
+    >
+      {/* Cabecera del slide */}
+      <header className="pa-slide-hdr">
+        <span className="pa-slide-emoji" aria-hidden="true">{tab.emoji}</span>
+        <span className="pa-slide-title">{tab.label}</span>
+      </header>
+
+      {/* Card con acento cromático */}
+      <div
+        className="pa-slide-card"
+        style={{ '--_tab-color': tab.color }}
+      >
+        {/* ── BuscadorProductos (solo en pestañas de comidas) ── */}
+        {tab.esMeal && isActive && (
+          <>
+            <div className="pa-bp-label">
+              <IcoSearchInline />
+              Buscar alimento para insertar
             </div>
 
-            {/* Buscador con panel flotante blur */}
             <BuscadorProductos
-              pacienteId={pacienteId}
               comida={tab.id}
-              onAgregar={handleAgregar}
               placeholder={`Buscar para ${tab.label.toLowerCase()}…`}
-              autoFocus={true}
+              onAgregar={onInsert}
             />
-          </div>
-        </div>
-      )}
-    </section>
+
+            <div className="pa-bp-divider" aria-hidden="true" />
+          </>
+        )}
+
+        {/* ── Textarea principal ── */}
+        <label className="pa-slide-label" htmlFor={`pa-textarea-${tab.id}`}>
+          {tab.esMeal ? '🍴 Detalle de alimentos' : '💡 Indicaciones y consejos'}
+        </label>
+
+        <textarea
+          id={`pa-textarea-${tab.id}`}
+          ref={textareaRef}
+          className={`pa-slide-textarea${flashed ? ' pa-slide-textarea--flashed' : ''}`}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={tab.placeholder}
+          aria-label={`Contenido de ${tab.label}`}
+          rows={tab.esMeal ? 7 : 9}
+          spellCheck="true"
+          autoCorrect="on"
+        />
+      </div>
+    </article>
+  )
+}
+
+// Ícono de búsqueda inline (mini, para el label del buscador)
+function IcoSearchInline() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2.3" strokeLinecap="round"
+         aria-hidden="true">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
   )
 }
