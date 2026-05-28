@@ -63,6 +63,56 @@ db.version(2).stores({
   outbox: 'id, tabla, accion, datos, timestamp, estado',
 })
 
+// ─── Seed de productos — Posadas, Misiones (CP 3300) ─────────────────────────
+//
+// precioRef        → precio del paquete de referencia (ARS, mayo 2025)
+// cantidadRefGramo → peso/volumen de ese paquete en gramos o ml
+// origen           → punto de venta (Libertad/ChangoMás = almacén;
+//                    Mercado Central Misiones = frescos con +30 % margen)
+
+export const PRODUCTOS_SEED_POSADAS = [
+  // ── Almacén ─────────────────────────────────────────────────────────────
+  { id: 'seed-arroz-blanco',     nombre: 'Arroz blanco',       categoria: 'cereales',  precioRef: 1200, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-arroz-integral',   nombre: 'Arroz integral',     categoria: 'cereales',  precioRef: 1400, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-avena',            nombre: 'Avena',              categoria: 'cereales',  precioRef:  950, cantidadRefGramo:  500, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-fideos',           nombre: 'Fideos',             categoria: 'cereales',  precioRef:  800, cantidadRefGramo:  500, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-harina',           nombre: 'Harina',             categoria: 'cereales',  precioRef:  700, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-pan-lactal',       nombre: 'Pan lactal',         categoria: 'panaderia', precioRef:  900, cantidadRefGramo:  400, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-leche-entera',     nombre: 'Leche entera',       categoria: 'lacteos',   precioRef: 1100, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-leche-descremada', nombre: 'Leche descremada',   categoria: 'lacteos',   precioRef: 1150, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-yogur-natural',    nombre: 'Yogur natural',      categoria: 'lacteos',   precioRef:  750, cantidadRefGramo:  190, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-yogur-griego',     nombre: 'Yogur griego',       categoria: 'lacteos',   precioRef:  980, cantidadRefGramo:  150, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-aceite',           nombre: 'Aceite',             categoria: 'grasas',    precioRef: 1800, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-azucar',           nombre: 'Azúcar',             categoria: 'varios',    precioRef:  900, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-pure-tomates',     nombre: 'Puré de tomates',    categoria: 'varios',    precioRef:  600, cantidadRefGramo:  520, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-atun',             nombre: 'Atún',               categoria: 'proteinas', precioRef: 1100, cantidadRefGramo:  170, origen: 'Hipermercado Libertad/ChangoMás' },
+  { id: 'seed-frutos-secos',     nombre: 'Frutos secos',       categoria: 'snacks',    precioRef: 2400, cantidadRefGramo:  250, origen: 'Hipermercado Libertad/ChangoMás' },
+  // ── Frescos (+30 % margen minorista) ────────────────────────────────────
+  { id: 'seed-pechuga-pollo',    nombre: 'Pechuga de pollo',   categoria: 'proteinas', precioRef: 2990, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-pollo',            nombre: 'Pollo',              categoria: 'proteinas', precioRef: 2470, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-carne-molida',     nombre: 'Carne molida',       categoria: 'proteinas', precioRef: 3380, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-salmon',           nombre: 'Salmón',             categoria: 'proteinas', precioRef: 5200, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-huevos',           nombre: 'Huevos',             categoria: 'proteinas', precioRef: 1950, cantidadRefGramo:  600, origen: 'Mercado Central Misiones' },
+  { id: 'seed-tomate',           nombre: 'Tomate',             categoria: 'verduras',  precioRef: 1300, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-lechuga',          nombre: 'Lechuga',            categoria: 'verduras',  precioRef:  780, cantidadRefGramo:  300, origen: 'Mercado Central Misiones' },
+  { id: 'seed-zanahoria',        nombre: 'Zanahoria',          categoria: 'verduras',  precioRef:  780, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-zapallo',          nombre: 'Zapallo',            categoria: 'verduras',  precioRef:  520, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-vegetales',        nombre: 'Vegetales',          categoria: 'verduras',  precioRef:  900, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-manzana',          nombre: 'Manzana',            categoria: 'frutas',    precioRef: 1170, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-banana',           nombre: 'Banana',             categoria: 'frutas',    precioRef:  910, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-naranja',          nombre: 'Naranja',            categoria: 'frutas',    precioRef:  845, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+]
+
+// v3: seed de productos con precios regionales (sin cambio de schema)
+db.version(3).upgrade(async (tx) => {
+  await tx.table('productos').bulkPut(PRODUCTOS_SEED_POSADAS)
+})
+
+// Para instalaciones nuevas (base de datos creada desde cero)
+db.on('populate', async () => {
+  await db.productos.bulkPut(PRODUCTOS_SEED_POSADAS)
+})
+
 // ─── Generador de IDs ─────────────────────────────────────────────────────────
 
 /**

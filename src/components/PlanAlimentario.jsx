@@ -51,6 +51,7 @@ import {
 import { liveQuery } from 'dexie'
 import { db, genId, queueSyncTask } from '@/db/database'
 import BuscadorProductos from './BuscadorProductos'
+import { parsearCostoTexto } from '@/utils/costos'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTES
@@ -834,6 +835,115 @@ const PA_CSS = `
   40%           { transform: scale(1);   opacity: 1;  }
 }
 
+/* ══ Widget de costo estimado (fondo amarillo pastel) ════════════════════ */
+
+.pa-costo {
+  background: var(--color-amarillo);
+  border: 1px solid var(--color-amarillo-deep, #E8C870);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: box-shadow var(--transition-fast);
+  animation: fade-in 200ms both;
+}
+.pa-costo__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pa-costo__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-durazno-dark, #C87040);
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+.pa-costo__valor {
+  font-size: var(--text-sm);
+  font-weight: 800;
+  color: var(--color-durazno-dark, #C87040);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.pa-costo__ico {
+  color: var(--texto-muy-suave, #B0B0B0);
+  flex-shrink: 0;
+  transition: transform 250ms cubic-bezier(.34,1.56,.64,1);
+}
+.pa-costo--open .pa-costo__ico { transform: rotate(180deg); }
+
+.pa-costo__desglose {
+  border-top: 1px solid var(--color-amarillo-deep, #E8C870);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  animation: fade-in 140ms both;
+}
+.pa-costo__seccion-titulo {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--texto-suave, #7A7A7A);
+  margin-bottom: 2px;
+}
+.pa-costo__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+.pa-costo__item-nombre {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--texto-suave, #7A7A7A);
+}
+.pa-costo__item-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pa-costo__item-tag--almacen { background: #E3ECF8; color: #3A60B0; }
+.pa-costo__item-tag--fresco  { background: var(--color-verde, #E2F0D9); color: var(--color-verde-dark, #568A48); }
+.pa-costo__item-precio {
+  font-weight: 700;
+  color: var(--texto-principal, #4A4A4A);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+}
+.pa-costo__subtotal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--color-amarillo-deep, #E8C870);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--color-durazno-dark, #C87040);
+}
+.pa-costo__leyenda {
+  font-size: 0.62rem;
+  color: var(--texto-muy-suave, #B0B0B0);
+  font-style: italic;
+  text-align: right;
+  margin-top: var(--space-1);
+}
+
 /* ══ Sin paciente ════════════════════════════════════════════════════════ */
 .pa-no-patient {
   display: flex;
@@ -925,6 +1035,13 @@ const IcoSearch = () => (
     <line x1="21" y1="21" x2="16.65" y2="16.65"/>
   </svg>
 )
+const IcoChevron = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
+    <polyline points="6 9 12 15 18 9"/>
+  </svg>
+)
 
 // ─── Iniciales del avatar ──────────────────────────────────────────────────
 
@@ -986,6 +1103,13 @@ export default function PlanAlimentario({ pacienteId }) {
     () => pacienteId ? db.pacientes.get(pacienteId) : Promise.resolve(null),
     [pacienteId],
     null,
+  )
+
+  /** Catálogo de productos — para estimación de costos */
+  const productos = useDexieLive(
+    () => db.productos.toArray(),
+    [],
+    [],
   )
 
   // ── Carga del plan del día desde Dexie (imperativa, no reactiva) ──────
@@ -1419,6 +1543,7 @@ export default function PlanAlimentario({ pacienteId }) {
                 textareaRef={el => { textareaRefs.current[tab.id] = el }}
                 onChange={val => handleCampoChange(tab.id, val)}
                 onInsert={item => handleInsertarProducto(item, tab.id)}
+                productos={productos}
               />
             ))}
           </div>
@@ -1465,7 +1590,7 @@ export default function PlanAlimentario({ pacienteId }) {
  * Recibe `isActive` para condicionar el renderizado del buscador
  * (evita paneles flotantes huérfanos en slides ocultos).
  */
-function SlidePanel({ tab, isActive, value, flashKey, textareaRef, onChange, onInsert }) {
+function SlidePanel({ tab, isActive, value, flashKey, textareaRef, onChange, onInsert, productos }) {
   // Clave de flash — cuando cambia, la animación se reinicia
   const [flashed, setFlashed] = useState(false)
   const prevFlashKey = useRef(flashKey)
@@ -1534,6 +1659,10 @@ function SlidePanel({ tab, isActive, value, flashKey, textareaRef, onChange, onI
           spellCheck="true"
           autoCorrect="on"
         />
+
+        {tab.esMeal && value.trim() && (
+          <CostoEstimado texto={value} productos={productos} />
+        )}
       </div>
     </article>
   )
@@ -1548,5 +1677,75 @@ function IcoSearchInline() {
       <circle cx="11" cy="11" r="8"/>
       <line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CostoEstimado — widget de presupuesto por comida (fondo amarillo pastel)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CostoEstimado({ texto, productos }) {
+  const [open, setOpen] = useState(false)
+
+  const { total, items } = useMemo(
+    () => parsearCostoTexto(texto, productos),
+    [texto, productos],
+  )
+
+  if (!items.length) return null
+
+  const almacen = items.filter(i => i.origen?.includes('Libertad') || i.origen?.includes('ChangoMás'))
+  const frescos  = items.filter(i => !i.origen?.includes('Libertad') && !i.origen?.includes('ChangoMás'))
+
+  const fmt = (n) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <div className={`pa-costo${open ? ' pa-costo--open' : ''}`}>
+      <button
+        className="pa-costo__summary"
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        aria-label={`Valor estimado en Posadas: $${fmt(total)}. ${open ? 'Cerrar desglose' : 'Ver desglose'}`}
+      >
+        <span className="pa-costo__label">Valor estimado en Posadas</span>
+        <span className="pa-costo__valor">${fmt(total)}</span>
+        <span className="pa-costo__ico"><IcoChevron /></span>
+      </button>
+
+      {open && (
+        <div className="pa-costo__desglose">
+          <DesgloseSec titulo="Almacén" items={almacen} tagCls="pa-costo__item-tag--almacen" fmt={fmt} />
+          <DesgloseSec titulo="Frescos" items={frescos}  tagCls="pa-costo__item-tag--fresco"  fmt={fmt} />
+          <div className="pa-costo__subtotal">
+            <span>Total esta comida</span>
+            <span>${fmt(total)}</span>
+          </div>
+          <p className="pa-costo__leyenda">
+            Datos de góndola actualizados · Posadas, Misiones
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DesgloseSec({ titulo, items, tagCls, fmt }) {
+  if (!items.length) return null
+  return (
+    <div>
+      <p className="pa-costo__seccion-titulo">{titulo}</p>
+      {items.map((item, i) => (
+        <div key={i} className="pa-costo__item">
+          <span className="pa-costo__item-nombre">
+            {item.nombre} · {item.porcion >= 1000
+              ? `${(item.porcion / 1000).toFixed(1)} kg`
+              : `${item.porcion} g`}
+          </span>
+          <span className={`pa-costo__item-tag ${tagCls}`}>{titulo}</span>
+          <span className="pa-costo__item-precio">${fmt(item.costo)}</span>
+        </div>
+      ))}
+    </div>
   )
 }

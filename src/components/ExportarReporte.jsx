@@ -11,6 +11,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import db from '@/db/database'
 import { useUIStore } from '@/store/useUIStore'
+import { calcularCostoMenu } from '@/utils/costos'
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -98,10 +99,11 @@ export default function ExportarReporte() {
 
     async function cargar() {
       try {
-        const [paciente, historiasAsc, planesArr] = await Promise.all([
+        const [paciente, historiasAsc, planesArr, productosArr] = await Promise.all([
           db.pacientes.get(pacienteId),
           db.historias.where('pacienteId').equals(pacienteId).sortBy('fecha'),
           db.planes.where('pacienteId').equals(pacienteId).toArray(),
+          db.productos.toArray(),
         ])
 
         if (cancelado) return
@@ -114,7 +116,7 @@ export default function ExportarReporte() {
         )
         const ultimoPlan = planesOrdenados[0] ?? null
 
-        setDatos({ paciente, historias, ultimaHistoria, ultimoPlan })
+        setDatos({ paciente, historias, ultimaHistoria, ultimoPlan, productos: productosArr })
       } catch (err) {
         console.error('[ExportarReporte] Error cargando datos:', err)
         if (!cancelado) setDatos(null)
@@ -172,13 +174,17 @@ export default function ExportarReporte() {
   }
 
   // ── Derivaciones ──────────────────────────────────────────────────────────
-  const { paciente, historias, ultimaHistoria, ultimoPlan } = datos
+  const { paciente, historias, ultimaHistoria, ultimoPlan, productos } = datos
 
   const nombreCompleto = [paciente?.nombre, paciente?.apellido]
     .filter(Boolean).join(' ') || 'Paciente sin nombre'
 
   const edad = calcularEdad(paciente?.fechaNacimiento)
   const cat  = imcInfo(ultimaHistoria?.imc)
+
+  const { costoDiario, costoMensual, desglose } = (ultimoPlan && productos?.length)
+    ? calcularCostoMenu(ultimoPlan, productos)
+    : { costoDiario: 0, costoMensual: 0, desglose: {} }
 
   const tendencia = (() => {
     if (historias.length < 2) return null
@@ -569,6 +575,62 @@ export default function ExportarReporte() {
             </div>
           )}
         </section>
+
+        {/* ──────────────────────────────────────────────────────────────
+            06 — PRESUPUESTO ALIMENTARIO MENSUAL · bloque verde pastel
+            ────────────────────────────────────────────────────────────── */}
+        {ultimoPlan && costoDiario > 0 && (
+          <section
+            className="reporte-section reporte-presupuesto"
+            aria-label="Presupuesto alimentario mensual estimado"
+            style={{ background: 'linear-gradient(180deg, #F6FBF3 0%, #FFFFFF 100%)' }}
+          >
+            <h2 className="reporte-section__title">
+              <span className="reporte-section__num">06</span>
+              Presupuesto Alimentario Mensual Estimado
+            </h2>
+
+            <p className="reporte-section__desc">
+              Estimación basada en precios de góndola de Posadas, Misiones (CP 3300).
+              Hipermercado Libertad/ChangoMás · Mercado Central Misiones. Mayo 2025.
+            </p>
+
+            <div className="reporte-presupuesto__grid">
+              <div className="reporte-presupuesto__card reporte-presupuesto__card--highlight">
+                <span className="reporte-presupuesto__card-label">Costo Mensual</span>
+                <span className="reporte-presupuesto__card-valor">
+                  ${costoMensual.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="reporte-presupuesto__card-detail">× 30 días</span>
+              </div>
+
+              <div className="reporte-presupuesto__card">
+                <span className="reporte-presupuesto__card-label">Costo Diario</span>
+                <span className="reporte-presupuesto__card-valor">
+                  ${costoDiario.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="reporte-presupuesto__card-detail">por día</span>
+              </div>
+
+              {Object.entries(desglose)
+                .filter(([, v]) => v > 0)
+                .map(([comida, valor]) => (
+                  <div key={comida} className="reporte-presupuesto__card reporte-presupuesto__card--comida">
+                    <span className="reporte-presupuesto__card-label">
+                      {comida.charAt(0).toUpperCase() + comida.slice(1)}
+                    </span>
+                    <span className="reporte-presupuesto__card-valor">
+                      ${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ))}
+            </div>
+
+            <p className="reporte-presupuesto__leyenda">
+              Los valores son estimados y pueden variar según promociones, estacionalidad y punto de venta.
+            </p>
+          </section>
+        )}
 
         {/* Pie de página */}
         <footer className="reporte-footer">
