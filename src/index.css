@@ -1576,6 +1576,70 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
 .reporte-evolucion-row--alerta td:last-child { color: var(--color-error); }
 .reporte-evolucion-row--normal  td:last-child { color: var(--color-verde-dark); }
 
+/* ── Presupuesto alimentario mensual (sección 06) ── */
+.reporte-presupuesto__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-3);
+}
+
+.reporte-presupuesto__card {
+  background: var(--color-verde);
+  border: 1px solid var(--color-verde-deep);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reporte-presupuesto__card--highlight {
+  background: linear-gradient(135deg, var(--color-verde), #D4EBD0);
+  border-color: var(--color-verde-deep);
+  box-shadow: 0 2px 8px rgba(123,174,112,.18);
+}
+
+.reporte-presupuesto__card--comida {
+  background: #FAFDF8;
+  border-color: #D4E8CE;
+}
+
+.reporte-presupuesto__card-label {
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-verde-dark, #568A48);
+}
+
+.reporte-presupuesto__card-valor {
+  font-size: var(--text-lg);
+  font-weight: 800;
+  color: var(--texto-principal, #4A4A4A);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.reporte-presupuesto__card--highlight .reporte-presupuesto__card-valor {
+  font-size: var(--text-xl);
+  color: var(--color-verde-dark, #568A48);
+}
+
+.reporte-presupuesto__card-detail {
+  font-size: 0.67rem;
+  color: var(--texto-suave, #7A7A7A);
+  font-style: italic;
+}
+
+.reporte-presupuesto__leyenda {
+  font-size: var(--text-xs);
+  color: var(--texto-muy-suave);
+  font-style: italic;
+  padding-top: var(--space-1);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    @MEDIA PRINT
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -1639,6 +1703,15 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
 
   .reporte-plan-grid {
     grid-template-columns: 1fr 1fr !important;
+  }
+
+  .reporte-presupuesto__grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .reporte-presupuesto {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .reporte-table thead {

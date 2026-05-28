@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import db, { outbox } from '@/db/database'
+import { sincronizar } from '@/services/syncService'
 
 const fechaHoy = () => new Date().toISOString().slice(0, 10)
 
@@ -67,16 +68,11 @@ export const useNutricionStore = create(
     // Disparado desde main.jsx al recibir postMessage del SW ('FLUSH_OUTBOX')
     // o desde OfflineBanner cuando la red se recupera.
     flushOutbox: async () => {
-      const { completados, fallidos } = await outbox.flush(async (item) => {
-        // TODO: reemplazar con el cliente HTTP real una vez definida la API REST
-        // Ejemplo de integración:
-        //   const { tipo, entidad, payload } = item
-        //   if (tipo === 'CREATE') await api.post(`/${entidad}`, payload)
-        //   if (tipo === 'UPDATE') await api.put(`/${entidad}/${item.entidadId}`, payload)
-        //   if (tipo === 'DELETE') await api.delete(`/${entidad}/${item.entidadId}`)
-        throw new Error('API client pendiente de implementar')
-      })
-      console.info(`[Outbox] Flush completado — OK: ${completados}, Error: ${fallidos}`)
+      const resultado = await sincronizar()
+      console.info(
+        `[Outbox] Flush completado — ${resultado.processed_items} ítems sincronizados`
+      )
+      return resultado
     },
   }))
 )

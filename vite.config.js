@@ -8,4 +8,12 @@ export default defineConfig({
     alias: { '@': '/src' },
   },
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })

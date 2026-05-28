@@ -10,6 +10,13 @@ export const useUIStore = create(
       isOnline: navigator.onLine,
       swUpdateAvailable: false,
 
+      /**
+       * UUID del paciente actualmente seleccionado (estado de sesión — no persiste).
+       * Se establece al hacer clic en una tarjeta de paciente en la lista.
+       * Permite que Planes y Reportes carguen los datos del paciente correcto.
+       */
+      pacienteId: null,
+
       // ─── Acciones ──────────────────────────────────────────────────────
       toggleTheme: () =>
         set((s) => {
@@ -22,6 +29,9 @@ export const useUIStore = create(
 
       setSwUpdateAvailable: (value) => set({ swUpdateAvailable: value }),
 
+      /** Selecciona el paciente activo para Planes y Reportes. */
+      setPacienteId: (id) => set({ pacienteId: id }),
+
       // Fuerza la activación del nuevo SW y recarga la página
       aplicarActualizacion: () => {
         navigator.serviceWorker?.controller?.postMessage({ type: 'SKIP_WAITING' })
@@ -30,7 +40,7 @@ export const useUIStore = create(
     }),
     {
       name: 'nutriapp-ui',
-      // Solo persistir el tema; isOnline y swUpdateAvailable son estado de sesión
+      // Solo persistir el tema; todo lo demás es estado de sesión
       partialize: (s) => ({ theme: s.theme }),
       onRehydrateStorage: () => (state) => {
         // Aplicar clase CSS antes del primer render para evitar FOUC

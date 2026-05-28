@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import db from '@/db/database'
 
 const TIPOS = ['peso', 'cintura', 'cadera', 'cuello', 'grasa_corporal']
@@ -26,8 +27,42 @@ export default function Progreso() {
 
   return (
     <main style={{ padding: 'var(--space-4)' }}>
-      <header style={{ marginBottom: 'var(--space-6)' }}>
+      <header style={{
+        marginBottom: 'var(--space-6)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 'var(--space-3)',
+        flexWrap: 'wrap',
+      }}>
         <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 700 }}>Mi Progreso</h1>
+        <Link
+          to="/exportar"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            padding: 'var(--space-2) var(--space-4)',
+            background: 'var(--color-primary)',
+            color: '#fff',
+            borderRadius: 'var(--radius-md)',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 600,
+            textDecoration: 'none',
+            boxShadow: '0 2px 8px rgba(46,125,50,.25)',
+            transition: 'opacity 150ms, transform 150ms',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.opacity = '0.88'
+            e.currentTarget.style.transform = 'translateY(-1px)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.opacity = '1'
+            e.currentTarget.style.transform = 'translateY(0)'
+          }}
+        >
+          📄 Exportar Reporte
+        </Link>
       </header>
 
       {cargando ? (
