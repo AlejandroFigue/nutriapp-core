@@ -1,93 +1,46 @@
 /**
- * database.js — NutriApp Profesional (Dexie)
+ * database.js — NutriApp Profesional (Dexie 3.x)
  *
- * v2: Esquema unificado multi-paciente para consultorio profesional.
- *     Stores: pacientes, historias, turnos, planes, plantillas, productos, outbox
+ * Cadena de versiones inmutable — NUNCA modificar una versión ya deployada:
  *
- * NOTA sobre $$id:
- *   Dexie no soporta el prefijo $$. La semántica equivalente — UUID generado
- *   en cliente, sin auto-increment — se implementa con `id` como primer campo
- *   (PK no numérico) y la función exportada `genId()`.
+ *   v1  Baseline inicial (establece el origen del grafo de migraciones)
+ *   v2  Esquema profesional completo con índices compuestos y sincronizado
+ *   v3  Seed idempotente: inserta productos solo si la tabla está vacía
+ *   v4  Agrega índice `origen` en productos; re-verifica seed para users
+ *       que llegaron a v3 sin datos (populate del navigate.serviceWorker falló)
  *
- * ADVERTENCIA DE MIGRACIÓN:
- *   Si ya existe una NutriAppDB en versión 3 en el navegador, Dexie lanzará
- *   un VersionError. Limpiar IndexedDB en DevTools → Application → Storage
- *   antes de correr esta versión por primera vez.
+ * populate  Solo se ejecuta en bases de datos creadas desde cero (v0→vN).
+ *
+ * Campos de costo regional (Posadas, CP 3300):
+ *   precioRef        ARS del paquete de referencia
+ *   cantidadRefGramo Peso/volumen de ese paquete en g o ml
+ *   origen           Punto de venta donde se relevó el precio
  */
+
 import Dexie from 'dexie'
 
-const db = new Dexie('NutriAppDB')
-
-// ── v2: esquema profesional completo ─────────────────────────────────────────
-
-db.version(2).stores({
-  /**
-   * PACIENTES — ficha clínica de cada paciente del profesional.
-   * PK: UUID string asignado en cliente con genId().
-   */
-  pacientes: 'id, nombre, email, telefono, sincronizado',
-
-  /**
-   * HISTORIAS — evolución clínica por paciente (peso, IMC, medidas…).
-   * [pacienteId+fecha] → consultas de historia en rango de fechas.
-   */
-  historias: 'id, pacienteId, fecha, imc, sincronizado, [pacienteId+fecha]',
-
-  /**
-   * TURNOS — agenda de citas del profesional.
-   * [pacienteId+fecha] → todos los turnos de un paciente en un día.
-   */
-  turnos: 'id, pacienteId, fecha, hora, estado, sincronizado, [pacienteId+fecha]',
-
-  /**
-   * PLANES — plan nutricional por paciente y fecha.
-   * [pacienteId+fecha] → plan vigente de un paciente.
-   */
-  planes: 'id, pacienteId, fecha, sincronizado, [pacienteId+fecha]',
-
-  /**
-   * PLANTILLAS — plantillas de planes reutilizables.
-   * PK: UUID string.
-   */
-  plantillas: 'id, nombre_plantilla',
-
-  /**
-   * PRODUCTOS — catálogo de alimentos y suplementos.
-   */
-  productos: 'id, nombre, categoria',
-
-  /**
-   * OUTBOX — cola de sincronización diferida (patrón at-least-once).
-   * `estado` indexado para filtrar pendientes / errores en Outbox.pendientes().
-   */
-  outbox: 'id, tabla, accion, datos, timestamp, estado',
-})
-
-// ─── Seed de productos — Posadas, Misiones (CP 3300) ─────────────────────────
-//
-// precioRef        → precio del paquete de referencia (ARS, mayo 2025)
-// cantidadRefGramo → peso/volumen de ese paquete en gramos o ml
-// origen           → punto de venta (Libertad/ChangoMás = almacén;
-//                    Mercado Central Misiones = frescos con +30 % margen)
+// ── Seed de productos — Posadas, Misiones ─────────────────────────────────────
+// Declarado antes de los hooks de versión para que las callbacks de upgrade
+// puedan referenciarlo en el momento en que son ejecutadas por Dexie.
 
 export const PRODUCTOS_SEED_POSADAS = [
-  // ── Almacén ─────────────────────────────────────────────────────────────
-  { id: 'seed-arroz-blanco',     nombre: 'Arroz blanco',       categoria: 'cereales',  precioRef: 1200, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-arroz-integral',   nombre: 'Arroz integral',     categoria: 'cereales',  precioRef: 1400, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-avena',            nombre: 'Avena',              categoria: 'cereales',  precioRef:  950, cantidadRefGramo:  500, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-fideos',           nombre: 'Fideos',             categoria: 'cereales',  precioRef:  800, cantidadRefGramo:  500, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-harina',           nombre: 'Harina',             categoria: 'cereales',  precioRef:  700, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-pan-lactal',       nombre: 'Pan lactal',         categoria: 'panaderia', precioRef:  900, cantidadRefGramo:  400, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-leche-entera',     nombre: 'Leche entera',       categoria: 'lacteos',   precioRef: 1100, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-leche-descremada', nombre: 'Leche descremada',   categoria: 'lacteos',   precioRef: 1150, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-yogur-natural',    nombre: 'Yogur natural',      categoria: 'lacteos',   precioRef:  750, cantidadRefGramo:  190, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-yogur-griego',     nombre: 'Yogur griego',       categoria: 'lacteos',   precioRef:  980, cantidadRefGramo:  150, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-aceite',           nombre: 'Aceite',             categoria: 'grasas',    precioRef: 1800, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-azucar',           nombre: 'Azúcar',             categoria: 'varios',    precioRef:  900, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-pure-tomates',     nombre: 'Puré de tomates',    categoria: 'varios',    precioRef:  600, cantidadRefGramo:  520, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-atun',             nombre: 'Atún',               categoria: 'proteinas', precioRef: 1100, cantidadRefGramo:  170, origen: 'Hipermercado Libertad/ChangoMás' },
-  { id: 'seed-frutos-secos',     nombre: 'Frutos secos',       categoria: 'snacks',    precioRef: 2400, cantidadRefGramo:  250, origen: 'Hipermercado Libertad/ChangoMás' },
-  // ── Frescos (+30 % margen minorista) ────────────────────────────────────
+  // Almacén — Hipermercado Libertad / ChangoMás
+  { id: 'seed-arroz-blanco',     nombre: 'Arroz blanco',       categoria: 'cereales',  precioRef: 1200, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-arroz-integral',   nombre: 'Arroz integral',     categoria: 'cereales',  precioRef: 1400, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-avena',            nombre: 'Avena',              categoria: 'cereales',  precioRef:  950, cantidadRefGramo:  500, origen: 'Hipermercado Libertad' },
+  { id: 'seed-fideos',           nombre: 'Fideos',             categoria: 'cereales',  precioRef:  800, cantidadRefGramo:  500, origen: 'Hipermercado Libertad' },
+  { id: 'seed-harina',           nombre: 'Harina',             categoria: 'cereales',  precioRef:  700, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-pan-lactal',       nombre: 'Pan lactal',         categoria: 'panaderia', precioRef:  900, cantidadRefGramo:  400, origen: 'Hipermercado Libertad' },
+  { id: 'seed-leche-entera',     nombre: 'Leche entera',       categoria: 'lacteos',   precioRef: 1100, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-leche-descremada', nombre: 'Leche descremada',   categoria: 'lacteos',   precioRef: 1150, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-yogur-natural',    nombre: 'Yogur natural',      categoria: 'lacteos',   precioRef:  750, cantidadRefGramo:  190, origen: 'Hipermercado Libertad' },
+  { id: 'seed-yogur-griego',     nombre: 'Yogur griego',       categoria: 'lacteos',   precioRef:  980, cantidadRefGramo:  150, origen: 'Hipermercado Libertad' },
+  { id: 'seed-aceite',           nombre: 'Aceite',             categoria: 'grasas',    precioRef: 1800, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-azucar',           nombre: 'Azúcar',             categoria: 'varios',    precioRef:  900, cantidadRefGramo: 1000, origen: 'Hipermercado Libertad' },
+  { id: 'seed-pure-tomates',     nombre: 'Puré de tomates',    categoria: 'varios',    precioRef:  600, cantidadRefGramo:  520, origen: 'Hipermercado Libertad' },
+  { id: 'seed-atun',             nombre: 'Atún',               categoria: 'proteinas', precioRef: 1100, cantidadRefGramo:  170, origen: 'Hipermercado Libertad' },
+  { id: 'seed-frutos-secos',     nombre: 'Frutos secos',       categoria: 'snacks',    precioRef: 2400, cantidadRefGramo:  250, origen: 'Hipermercado Libertad' },
+  // Frescos — Mercado Central de Misiones (precio ya incluye +30 % minorista)
   { id: 'seed-pechuga-pollo',    nombre: 'Pechuga de pollo',   categoria: 'proteinas', precioRef: 2990, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-pollo',            nombre: 'Pollo',              categoria: 'proteinas', precioRef: 2470, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-carne-molida',     nombre: 'Carne molida',       categoria: 'proteinas', precioRef: 3380, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
@@ -97,66 +50,97 @@ export const PRODUCTOS_SEED_POSADAS = [
   { id: 'seed-lechuga',          nombre: 'Lechuga',            categoria: 'verduras',  precioRef:  780, cantidadRefGramo:  300, origen: 'Mercado Central Misiones' },
   { id: 'seed-zanahoria',        nombre: 'Zanahoria',          categoria: 'verduras',  precioRef:  780, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-zapallo',          nombre: 'Zapallo',            categoria: 'verduras',  precioRef:  520, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
-  { id: 'seed-vegetales',        nombre: 'Vegetales',          categoria: 'verduras',  precioRef:  900, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
+  { id: 'seed-vegetales',        nombre: 'Vegetales mixtos',   categoria: 'verduras',  precioRef:  900, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-manzana',          nombre: 'Manzana',            categoria: 'frutas',    precioRef: 1170, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-banana',           nombre: 'Banana',             categoria: 'frutas',    precioRef:  910, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-naranja',          nombre: 'Naranja',            categoria: 'frutas',    precioRef:  845, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
 ]
 
-// v3: seed de productos con precios regionales (sin cambio de schema)
+// ── Instancia Dexie ───────────────────────────────────────────────────────────
+
+const db = new Dexie('NutriAppDB')
+
+// ── v1: Baseline inicial ──────────────────────────────────────────────────────
+// Establece el punto de inicio del grafo de migraciones.
+// Es seguro agregarlo retroactivamente: Dexie nunca ejecuta migraciones de
+// versiones inferiores a la versión actual del navegador.
+db.version(1).stores({
+  pacientes:  'id, nombre, email, telefono',
+  historias:  'id, pacienteId, fecha',
+  turnos:     'id, pacienteId, fecha, hora, estado',
+  planes:     'id, pacienteId, fecha',
+  plantillas: 'id, nombre_plantilla',
+  productos:  'id, nombre, categoria',
+  outbox:     'id, tabla, accion, timestamp, estado',
+})
+
+// ── v2: Esquema profesional completo ─────────────────────────────────────────
+// Agrega índices compuestos para consultas por paciente+fecha y el campo
+// `sincronizado` para rastrear pendientes de sync en todas las tablas.
+db.version(2).stores({
+  pacientes:  'id, nombre, email, telefono, sincronizado',
+  historias:  'id, pacienteId, fecha, imc, sincronizado, [pacienteId+fecha]',
+  turnos:     'id, pacienteId, fecha, hora, estado, sincronizado, [pacienteId+fecha]',
+  planes:     'id, pacienteId, fecha, sincronizado, [pacienteId+fecha]',
+  plantillas: 'id, nombre_plantilla',
+  productos:  'id, nombre, categoria',
+  outbox:     'id, tabla, accion, datos, timestamp, estado',
+})
+
+// ── v3: Seed idempotente ──────────────────────────────────────────────────────
+// Solo inserta si la tabla está vacía; nunca sobreescribe ediciones del usuario.
 db.version(3).upgrade(async (tx) => {
-  await tx.table('productos').bulkPut(PRODUCTOS_SEED_POSADAS)
+  const count = await tx.table('productos').count()
+  if (count === 0) {
+    await tx.table('productos').bulkAdd(PRODUCTOS_SEED_POSADAS)
+  }
 })
 
-// Para instalaciones nuevas (base de datos creada desde cero)
+// ── v4: Índice `origen` + re-verificación de seed ────────────────────────────
+// Añade el índice `origen` para filtrar por punto de venta (Libertad vs Mercado).
+// El re-check de seed cubre dispositivos que llegaron a v3 sin datos (ej: error
+// de red durante la primera carga, pruebas con DB vacía, etc.).
+db.version(4).stores({
+  productos: 'id, nombre, categoria, origen',
+}).upgrade(async (tx) => {
+  const count = await tx.table('productos').count()
+  if (count === 0) {
+    await tx.table('productos').bulkAdd(PRODUCTOS_SEED_POSADAS)
+  }
+})
+
+// Instalaciones nuevas: la DB se crea directamente en v4, populate reemplaza
+// los hooks de upgrade para la inicialización de datos iniciales.
 db.on('populate', async () => {
-  await db.productos.bulkPut(PRODUCTOS_SEED_POSADAS)
+  await db.productos.bulkAdd(PRODUCTOS_SEED_POSADAS)
 })
 
-// ─── Generador de IDs ─────────────────────────────────────────────────────────
+// ── Generador de IDs ──────────────────────────────────────────────────────────
 
-/**
- * Genera un UUID v4 usando la Crypto API del browser.
- * Úsalo como PK en todas las tablas.
- *
- * @returns {string} UUID v4 (ej: "550e8400-e29b-41d4-a716-446655440000")
- */
 export const genId = () => crypto.randomUUID()
 
-// ─── Background Sync ──────────────────────────────────────────────────────────
+// ── Background Sync ───────────────────────────────────────────────────────────
 
-/**
- * Registra el tag 'sync-outbox' en el Service Worker.
- * Falla silenciosamente si Background Sync no está disponible.
- */
 async function registrarBackgroundSync() {
   if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return
   try {
     const reg = await navigator.serviceWorker.ready
     await reg.sync.register('sync-outbox')
   } catch {
-    // Background Sync no disponible en este entorno
+    // Background Sync no disponible (HTTP, Safari, o SW no registrado aún)
   }
 }
 
-// ─── queueSyncTask — API pública del outbox ───────────────────────────────────
+// ── queueSyncTask ─────────────────────────────────────────────────────────────
 
 /**
- * Encola una operación para sincronizar con el servidor y registra
- * Background Sync para procesarla cuando la red esté disponible.
+ * Encola una operación en el outbox y registra Background Sync.
+ * Llamar después de cada mutación offline-first sobre IndexedDB.
  *
- * Es la función central del patrón Outbox: toda mutación offline-first
- * debe llamarla después de escribir en IndexedDB.
- *
- * @param {string}                     tabla   Tabla afectada ('pacientes', 'turnos'…)
- * @param {'CREATE'|'UPDATE'|'DELETE'} accion  Tipo de operación
- * @param {object}                     datos   Payload completo del registro
- * @returns {Promise<string>}  UUID del ítem creado en outbox
- *
- * @example
- *   const id = genId()
- *   await db.pacientes.add({ id, nombre: 'Ana', … })
- *   await queueSyncTask('pacientes', 'CREATE', { id, nombre: 'Ana', … })
+ * @param {string}                     tabla
+ * @param {'CREATE'|'UPDATE'|'DELETE'} accion
+ * @param {object}                     datos
+ * @returns {Promise<string>} UUID del ítem creado en outbox
  */
 export async function queueSyncTask(tabla, accion, datos) {
   const id = genId()
@@ -174,18 +158,13 @@ export async function queueSyncTask(tabla, accion, datos) {
   return id
 }
 
-// ─── Clase Outbox ─────────────────────────────────────────────────────────────
+// ── Clase Outbox ──────────────────────────────────────────────────────────────
 
 class Outbox {
-  /** @returns {Dexie.Table} */
   get tabla() {
     return db.outbox
   }
 
-  /**
-   * Compatibilidad con código existente que llama outbox.encolar().
-   * Mapea los argumentos al nuevo schema y delega en queueSyncTask.
-   */
   async encolar(tipo, entidad, entidadId, payload) {
     const datos = payload
       ? { ...payload, id: payload.id ?? entidadId }
@@ -193,14 +172,12 @@ class Outbox {
     return queueSyncTask(entidad, tipo, datos)
   }
 
-  /** Items pendientes de procesar, ordenados por antigüedad. */
   async pendientes() {
     return this.tabla
       .where('estado').anyOf(['pendiente', 'procesando'])
       .sortBy('timestamp')
   }
 
-  /** Items que superaron MAX_INTENTOS y requieren revisión manual. */
   async fallidos() {
     return this.tabla
       .where('estado').equals('error')
@@ -228,7 +205,7 @@ class Outbox {
   }
 
   /**
-   * Procesa todos los ítems pendientes con la función apiFn provista.
+   * Procesa todos los ítems pendientes con apiFn.
    * Si apiFn rechaza, el ítem se marca como fallido y se continúa.
    *
    * @param {(item: object) => Promise<void>} apiFn
@@ -246,7 +223,6 @@ class Outbox {
         await apiFn({
           ...item,
           datos:     datosParseados,
-          // Aliases de compatibilidad
           entidad:   item.tabla,
           tipo:      item.accion,
           entidadId: datosParseados?.id ?? null,
@@ -263,15 +239,10 @@ class Outbox {
     return { completados, fallidos }
   }
 
-  /** Alias público para compatibilidad. */
   async registrarSync() {
     await registrarBackgroundSync()
   }
 
-  /**
-   * Elimina ítems completados con más de `diasAntiguedad` días.
-   * @param {number} diasAntiguedad  Default: 30
-   */
   async limpiar(diasAntiguedad = 30) {
     const corte = Date.now() - diasAntiguedad * 24 * 60 * 60 * 1000
     return this.tabla
