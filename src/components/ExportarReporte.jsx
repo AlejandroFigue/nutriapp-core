@@ -1,66 +1,42 @@
 /**
- * ExportarReporte — Resumen Ejecutivo Médico de Lujo · NutriApp Profesional
+ * ExportarReporte — Resumen Ejecutivo Médico · Paleta Pastel Profesional
  *
- * Arquitectura y flujo de datos:
- *   1. Lee `pacienteId` desde UIStore global (establecido en /pacientes).
- *   2. Carga en paralelo desde IndexedDB (Dexie v2):
- *        · paciente        → tabla `pacientes` (datos personales, objetivo)
- *        · historias       → tabla `historias` (peso, IMC, medidas — desc. por fecha)
- *        · planes          → tabla `planes`    (último plan con desayuno, almuerzo…)
- *   3. Renderiza como un documento membretado corporativo:
- *        · Sección 01 — Datos del Paciente
- *        · Sección 02 — Métricas Antropométricas
- *        · Sección 03 — Evolución IMC (tabla de las últimas consultas)
- *        · Sección 04 — Plan Alimentario Asignado (comidas del último plan)
- *        · Sección 05 — Notas e Indicaciones Clínicas
- *
- * Impresión (window.print() + @media print en index.css):
- *   · Toda la UI de la app queda oculta (visibility: hidden en body *)
- *   · Solo .reporte-doc se revela y ocupa la página A4 completa
- *   · page-break-inside: avoid en secciones, tarjetas y comidas
- *   · Tablas con bordes sólidos para impresión clara
- *
- * Recibe: ninguna prop obligatoria — lee pacienteId desde UIStore.
+ * Flujo:
+ *   1. Lee `pacienteId` desde UIStore global.
+ *   2. Carga en paralelo: paciente, historias, planes (Dexie v2).
+ *   3. Renderiza documento membretado con bloques pastel diferenciados.
+ *   4. window.print() aísla .reporte-doc en A4 limpio.
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import db from '@/db/database'
 import { useUIStore } from '@/store/useUIStore'
 
-// ─── Utilidades de formato ────────────────────────────────────────────────────
+// ─── Utilidades ───────────────────────────────────────────────────────────────
 
-/** Capitaliza la primera letra de cada palabra. */
 const titleCase = (str = '') =>
   str.replace(/\b\w/g, (c) => c.toUpperCase())
 
-/** Formatea fecha ISO a "DD MMM YYYY" en español argentino. */
 function fCorta(iso) {
   if (!iso) return '—'
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00` : iso)
   return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-/** Formatea fecha completa con día de la semana. */
 function fCompleta(d = new Date()) {
   return d.toLocaleDateString('es-AR', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
 }
 
-/**
- * Genera número de referencia reproducible para el día actual.
- * No usa Math.random() para que no cambie en cada re-render.
- * Ej: NRP-202605-2714
- */
 function generarRef() {
-  const d = new Date()
+  const d  = new Date()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   const hh = String(d.getHours()).padStart(2, '0')
   return `NRP-${d.getFullYear()}${mm}-${dd}${hh}`
 }
 
-/** Calcula la edad en años a partir de una fecha de nacimiento ISO. */
 function calcularEdad(fechaNacStr) {
   if (!fechaNacStr) return null
   const nac  = new Date(fechaNacStr + 'T12:00:00')
@@ -71,15 +47,15 @@ function calcularEdad(fechaNacStr) {
   return edad
 }
 
-// ─── Clasificación IMC (OMS) ─────────────────────────────────────────────────
+// ─── Clasificación IMC ────────────────────────────────────────────────────────
 
 const IMC_CATS = [
-  { max: 18.5, label: 'Bajo peso',    cls: 'bajo'      },
-  { max: 25,   label: 'Peso normal',  cls: 'normal'    },
-  { max: 30,   label: 'Sobrepeso',    cls: 'sobrepeso' },
-  { max: 35,   label: 'Obesidad I',   cls: 'obesidad'  },
-  { max: 40,   label: 'Obesidad II',  cls: 'obesidad'  },
-  { max: Infinity, label: 'Obesidad III', cls: 'obesidad' },
+  { max: 18.5,     label: 'Bajo peso',    cls: 'bajo'      },
+  { max: 25,       label: 'Peso normal',  cls: 'normal'    },
+  { max: 30,       label: 'Sobrepeso',    cls: 'sobrepeso' },
+  { max: 35,       label: 'Obesidad I',   cls: 'obesidad'  },
+  { max: 40,       label: 'Obesidad II',  cls: 'obesidad'  },
+  { max: Infinity, label: 'Obesidad III', cls: 'obesidad'  },
 ]
 
 function imcInfo(imc) {
@@ -98,23 +74,22 @@ const OBJETIVO_LABELS = {
 }
 
 const MEALS = [
-  { id: 'desayuno',  label: 'Desayuno',   emoji: '☀️'  },
-  { id: 'almuerzo',  label: 'Almuerzo',   emoji: '🍽️' },
-  { id: 'merienda',  label: 'Merienda',   emoji: '☕'  },
-  { id: 'cena',      label: 'Cena',       emoji: '🌙'  },
+  { id: 'desayuno', label: 'Desayuno'  },
+  { id: 'almuerzo', label: 'Almuerzo'  },
+  { id: 'merienda', label: 'Merienda'  },
+  { id: 'cena',     label: 'Cena'      },
 ]
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function ExportarReporte() {
-  const pacienteId   = useUIStore((s) => s.pacienteId)
-  const [datos, setDatos]         = useState(null)
-  const [cargando, setCargando]   = useState(false)
+  const pacienteId             = useUIStore((s) => s.pacienteId)
+  const [datos, setDatos]       = useState(null)
+  const [cargando, setCargando] = useState(false)
   const [generando, setGenerando] = useState(false)
   const numeroRef = useRef(generarRef())
   const fechaStr  = fCompleta()
 
-  // ── Carga de datos desde IndexedDB ────────────────────────────────────────
   useEffect(() => {
     if (!pacienteId) { setDatos(null); return }
 
@@ -123,7 +98,6 @@ export default function ExportarReporte() {
 
     async function cargar() {
       try {
-        // Carga en paralelo desde Dexie v2
         const [paciente, historiasAsc, planesArr] = await Promise.all([
           db.pacientes.get(pacienteId),
           db.historias.where('pacienteId').equals(pacienteId).sortBy('fecha'),
@@ -132,11 +106,9 @@ export default function ExportarReporte() {
 
         if (cancelado) return
 
-        // Historias en orden descendente (más reciente primero)
-        const historias = [...historiasAsc].reverse()
+        const historias     = [...historiasAsc].reverse()
         const ultimaHistoria = historias[0] ?? null
 
-        // Plan más reciente (mayor fecha)
         const planesOrdenados = [...planesArr].sort((a, b) =>
           (b.fecha ?? '').localeCompare(a.fecha ?? '')
         )
@@ -155,7 +127,6 @@ export default function ExportarReporte() {
     return () => { cancelado = true }
   }, [pacienteId])
 
-  // ── Imprimir ──────────────────────────────────────────────────────────────
   const handlePrint = useCallback(() => {
     setGenerando(true)
     setTimeout(() => {
@@ -164,29 +135,29 @@ export default function ExportarReporte() {
     }, 260)
   }, [])
 
-  // ── Estado: ningún paciente seleccionado ─────────────────────────────────
+  // ── Sin paciente seleccionado ─────────────────────────────────────────────
   if (!pacienteId) {
     return (
       <div className="reporte-wrapper">
         <div className="reporte-no-patient" role="status" aria-live="polite">
-          <div className="reporte-no-patient__orb" aria-hidden="true">🗂️</div>
+          <div className="reporte-no-patient__orb" aria-hidden="true" />
           <p className="reporte-no-patient__title">
             Ningún paciente seleccionado
           </p>
           <p className="reporte-no-patient__text">
             Seleccioná un paciente en la pestaña <strong>Pacientes</strong> para
-            generar su Reporte Ejecutivo personalizado con métricas
-            antropométricas, evolución IMC y plan alimentario asignado.
+            generar su Resumen Ejecutivo con métricas antropométricas,
+            evolución IMC y plan alimentario asignado.
           </p>
           <Link to="/pacientes" className="reporte-no-patient__cta">
-            ← Ir a Pacientes
+            Ir a Pacientes
           </Link>
         </div>
       </div>
     )
   }
 
-  // ── Estado: cargando ─────────────────────────────────────────────────────
+  // ── Cargando ──────────────────────────────────────────────────────────────
   if (cargando || datos === null) {
     return (
       <div className="reporte-loading" role="status" aria-live="polite">
@@ -200,16 +171,15 @@ export default function ExportarReporte() {
     )
   }
 
-  // ── Derivaciones de datos ─────────────────────────────────────────────────
+  // ── Derivaciones ──────────────────────────────────────────────────────────
   const { paciente, historias, ultimaHistoria, ultimoPlan } = datos
 
   const nombreCompleto = [paciente?.nombre, paciente?.apellido]
     .filter(Boolean).join(' ') || 'Paciente sin nombre'
 
-  const edad  = calcularEdad(paciente?.fechaNacimiento)
-  const cat   = imcInfo(ultimaHistoria?.imc)
+  const edad = calcularEdad(paciente?.fechaNacimiento)
+  const cat  = imcInfo(ultimaHistoria?.imc)
 
-  // Tendencia del IMC (últimas 2 consultas)
   const tendencia = (() => {
     if (historias.length < 2) return null
     const diff = (historias[0].imc ?? 0) - (historias[1].imc ?? 0)
@@ -219,24 +189,23 @@ export default function ExportarReporte() {
       : { dir: 'up',     label: `↑ ${Math.abs(diff).toFixed(1)} pts`, sign: '↑' }
   })()
 
-  // Métricas de la última consulta (solo las que tienen valor)
   const metricasConValor = [
-    { tipo: 'IMC',           val: ultimaHistoria?.imc         != null ? ultimaHistoria.imc.toFixed(1)          : null, unidad: '', esIMC: true },
-    { tipo: 'Peso',          val: ultimaHistoria?.peso        != null ? ultimaHistoria.peso                     : null, unidad: 'kg'  },
-    { tipo: 'Talla',         val: ultimaHistoria?.altura      != null ? `${ultimaHistoria.altura}`              : null, unidad: 'cm'  },
-    { tipo: 'Masa Grasa',    val: ultimaHistoria?.masaGrasa   != null ? ultimaHistoria.masaGrasa                : null, unidad: '%'   },
-    { tipo: 'Masa Muscular', val: ultimaHistoria?.masaMuscular!= null ? ultimaHistoria.masaMuscular             : null, unidad: 'kg'  },
-    { tipo: 'Cintura',       val: ultimaHistoria?.cintura     != null ? ultimaHistoria.cintura                  : null, unidad: 'cm'  },
-    { tipo: 'Cadera',        val: ultimaHistoria?.cadera      != null ? ultimaHistoria.cadera                   : null, unidad: 'cm'  },
-    { tipo: 'Agua Corporal', val: ultimaHistoria?.aguaCorporal!= null ? ultimaHistoria.aguaCorporal             : null, unidad: '%'   },
-    { tipo: 'Glucosa',       val: ultimaHistoria?.glucosa     != null ? ultimaHistoria.glucosa                  : null, unidad: 'mg/dL'},
+    { tipo: 'IMC',           val: ultimaHistoria?.imc          != null ? ultimaHistoria.imc.toFixed(1)  : null, unidad: '',      esIMC: true },
+    { tipo: 'Peso',          val: ultimaHistoria?.peso         != null ? ultimaHistoria.peso             : null, unidad: 'kg'  },
+    { tipo: 'Talla',         val: ultimaHistoria?.altura       != null ? `${ultimaHistoria.altura}`      : null, unidad: 'cm'  },
+    { tipo: 'Masa Grasa',    val: ultimaHistoria?.masaGrasa    != null ? ultimaHistoria.masaGrasa        : null, unidad: '%'   },
+    { tipo: 'Masa Muscular', val: ultimaHistoria?.masaMuscular != null ? ultimaHistoria.masaMuscular     : null, unidad: 'kg'  },
+    { tipo: 'Cintura',       val: ultimaHistoria?.cintura      != null ? ultimaHistoria.cintura          : null, unidad: 'cm'  },
+    { tipo: 'Cadera',        val: ultimaHistoria?.cadera       != null ? ultimaHistoria.cadera           : null, unidad: 'cm'  },
+    { tipo: 'Agua Corporal', val: ultimaHistoria?.aguaCorporal != null ? ultimaHistoria.aguaCorporal     : null, unidad: '%'   },
+    { tipo: 'Glucosa',       val: ultimaHistoria?.glucosa      != null ? ultimaHistoria.glucosa          : null, unidad: 'mg/dL' },
   ].filter((m) => m.val !== null)
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="reporte-wrapper">
 
-      {/* ── Barra de acciones — oculta al imprimir ── */}
+      {/* Barra de acciones — se oculta al imprimir */}
       <div className="reporte-actions">
         <Link to="/pacientes" className="reporte-back-btn">
           ← Cambiar paciente
@@ -248,22 +217,28 @@ export default function ExportarReporte() {
           disabled={generando}
           type="button"
         >
-          {generando
-            ? 'Preparando…'
-            : <><IconPrint aria-hidden="true" /> Imprimir / Guardar PDF</>
-          }
+          {generando ? (
+            'Preparando…'
+          ) : (
+            <>
+              <IconPrint aria-hidden="true" />
+              Imprimir · Guardar PDF
+            </>
+          )}
         </button>
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          DOCUMENTO — única sección que el navegador imprime
-          ═══════════════════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════
+          DOCUMENTO — único bloque visible al imprimir
+          ══════════════════════════════════════════════════════════════════ */}
       <div className="reporte-doc" id="reporte-documento">
 
-        {/* ── MEMBRETE ───────────────────────────────────────────────────── */}
+        {/* MEMBRETE — bloque durazno */}
         <header className="reporte-letterhead">
           <div className="reporte-letterhead__brand">
-            <div className="reporte-letterhead__logo" aria-hidden="true">🥗</div>
+            <div className="reporte-letterhead__logo" aria-hidden="true">
+              NP
+            </div>
             <div>
               <p className="reporte-letterhead__title">NutriApp Profesional</p>
               <p className="reporte-letterhead__subtitle">
@@ -272,18 +247,16 @@ export default function ExportarReporte() {
             </div>
           </div>
           <div className="reporte-letterhead__meta">
-            <p className="reporte-letterhead__professional">
-              Lic. en Nutrición
-            </p>
+            <p className="reporte-letterhead__professional">Lic. en Nutrición</p>
             <p className="reporte-letterhead__date">{fechaStr}</p>
             <p className="reporte-letterhead__ref">{numeroRef.current}</p>
           </div>
         </header>
 
-        {/* Franja dorada separadora */}
+        {/* Franja tricolor separadora */}
         <div className="reporte-rule" aria-hidden="true" />
 
-        {/* ── Título del resumen ejecutivo ── */}
+        {/* Título del resumen */}
         <div className="reporte-title-section">
           <h1 className="reporte-main-title">
             Resumen Ejecutivo del Paciente
@@ -296,9 +269,9 @@ export default function ExportarReporte() {
           </p>
         </div>
 
-        {/* ────────────────────────────────────────────────────────────────
-            SECCIÓN 01 — DATOS DEL PACIENTE
-            ──────────────────────────────────────────────────────────────── */}
+        {/* ──────────────────────────────────────────────────────────────
+            01 — DATOS DEL PACIENTE · bloque superficie neutral
+            ────────────────────────────────────────────────────────────── */}
         <section className="reporte-section" aria-label="Datos del paciente">
           <h2 className="reporte-section__title">
             <span className="reporte-section__num">01</span>
@@ -306,9 +279,8 @@ export default function ExportarReporte() {
           </h2>
 
           <div className="reporte-patient-grid">
-            {/* Columna izquierda — datos personales */}
             <div className="reporte-patient-col">
-              <Field label="Nombre completo"   value={nombreCompleto} />
+              <Field label="Nombre completo" value={nombreCompleto} />
               <Field
                 label="Edad"
                 value={
@@ -333,7 +305,6 @@ export default function ExportarReporte() {
               />
             </div>
 
-            {/* Columna derecha — contacto y admin */}
             <div className="reporte-patient-col">
               <Field label="Correo electrónico" value={paciente?.email}    />
               <Field label="Teléfono"            value={paciente?.telefono} />
@@ -342,17 +313,21 @@ export default function ExportarReporte() {
                 value={paciente?.creadoEn ? fCorta(paciente.creadoEn) : null}
               />
               <Field
-                label="Estado de sincronización"
-                value={paciente?.sincronizado ? 'Sincronizado con el servidor' : 'Guardado localmente'}
+                label="Estado"
+                value={paciente?.sincronizado ? 'Sincronizado' : 'Guardado localmente'}
               />
             </div>
           </div>
         </section>
 
-        {/* ────────────────────────────────────────────────────────────────
-            SECCIÓN 02 — MÉTRICAS ANTROPOMÉTRICAS
-            ──────────────────────────────────────────────────────────────── */}
-        <section className="reporte-section" aria-label="Métricas antropométricas">
+        {/* ──────────────────────────────────────────────────────────────
+            02 — MÉTRICAS ANTROPOMÉTRICAS · bloque verde pastel
+            ────────────────────────────────────────────────────────────── */}
+        <section
+          className="reporte-section"
+          aria-label="Métricas antropométricas"
+          style={{ background: 'linear-gradient(180deg, #FAFDF8 0%, #FFFFFF 100%)' }}
+        >
           <h2 className="reporte-section__title">
             <span className="reporte-section__num">02</span>
             Métricas Antropométricas
@@ -369,7 +344,7 @@ export default function ExportarReporte() {
                 Última consulta registrada el{' '}
                 <strong>{fCorta(ultimaHistoria?.fecha)}</strong>.
                 {historias.length > 1 && (
-                  <> Total de consultas acumuladas: <strong>{historias.length}</strong>.</>
+                  <> Total de consultas: <strong>{historias.length}</strong>.</>
                 )}
                 {tendencia && (
                   <> Tendencia IMC:{' '}
@@ -400,7 +375,10 @@ export default function ExportarReporte() {
                         {cat.label}
                       </span>
                     )}
-                    <time className="reporte-medicion-card__fecha" dateTime={ultimaHistoria?.fecha}>
+                    <time
+                      className="reporte-medicion-card__fecha"
+                      dateTime={ultimaHistoria?.fecha}
+                    >
                       {fCorta(ultimaHistoria?.fecha)}
                     </time>
                   </div>
@@ -410,10 +388,14 @@ export default function ExportarReporte() {
           )}
         </section>
 
-        {/* ────────────────────────────────────────────────────────────────
-            SECCIÓN 03 — EVOLUCIÓN IMC
-            ──────────────────────────────────────────────────────────────── */}
-        <section className="reporte-section" aria-label="Evolución IMC">
+        {/* ──────────────────────────────────────────────────────────────
+            03 — EVOLUCIÓN IMC · bloque amarillo pastel
+            ────────────────────────────────────────────────────────────── */}
+        <section
+          className="reporte-section"
+          aria-label="Evolución IMC"
+          style={{ background: 'linear-gradient(180deg, #FFFEF8 0%, #FFFFFF 100%)' }}
+        >
           <h2 className="reporte-section__title">
             <span className="reporte-section__num">03</span>
             Evolución IMC — Historial de Consultas
@@ -432,7 +414,7 @@ export default function ExportarReporte() {
                   {historias.length === 1 ? 'consulta' : 'consultas'}
                 </strong>
                 {historias.length > 8 && ` (de ${historias.length} totales)`}
-                {' '}ordenado por fecha descendente.
+                {' '}en orden descendente.
               </p>
 
               <table className="reporte-table">
@@ -447,14 +429,16 @@ export default function ExportarReporte() {
                 </thead>
                 <tbody>
                   {historias.slice(0, 8).map((h, i) => {
-                    const info = imcInfo(h.imc)
+                    const info     = imcInfo(h.imc)
                     const esAlerta = info.cls === 'sobrepeso' || info.cls === 'obesidad'
                     return (
                       <tr
                         key={h.id}
-                        className={esAlerta
-                          ? 'reporte-evolucion-row--alerta'
-                          : 'reporte-evolucion-row--normal'}
+                        className={
+                          esAlerta
+                            ? 'reporte-evolucion-row--alerta'
+                            : 'reporte-evolucion-row--normal'
+                        }
                       >
                         <td>
                           <strong>{fCorta(h.fecha)}</strong>
@@ -462,12 +446,12 @@ export default function ExportarReporte() {
                             <span className="reporte-table__detail">Más reciente</span>
                           )}
                         </td>
-                        <td>{h.peso != null ? `${h.peso} kg` : '—'}</td>
+                        <td>{h.peso   != null ? `${h.peso} kg`   : '—'}</td>
                         <td>{h.altura != null ? `${h.altura} cm` : '—'}</td>
                         <td>
-                          {h.imc != null ? (
-                            <strong>{Number(h.imc).toFixed(1)}</strong>
-                          ) : '—'}
+                          {h.imc != null
+                            ? <strong>{Number(h.imc).toFixed(1)}</strong>
+                            : '—'}
                         </td>
                         <td>
                           {h.imc != null ? (
@@ -492,10 +476,14 @@ export default function ExportarReporte() {
           )}
         </section>
 
-        {/* ────────────────────────────────────────────────────────────────
-            SECCIÓN 04 — PLAN ALIMENTARIO ASIGNADO
-            ──────────────────────────────────────────────────────────────── */}
-        <section className="reporte-section" aria-label="Plan alimentario asignado">
+        {/* ──────────────────────────────────────────────────────────────
+            04 — PLAN ALIMENTARIO · bloque durazno pastel
+            ────────────────────────────────────────────────────────────── */}
+        <section
+          className="reporte-section"
+          aria-label="Plan alimentario asignado"
+          style={{ background: 'linear-gradient(180deg, #FFFAF7 0%, #FFFFFF 100%)' }}
+        >
           <h2 className="reporte-section__title">
             <span className="reporte-section__num">04</span>
             Plan Alimentario Asignado
@@ -511,34 +499,30 @@ export default function ExportarReporte() {
               <p className="reporte-section__desc">
                 Plan vigente con fecha{' '}
                 <strong>{fCorta(ultimoPlan.fecha)}</strong>.
-                Completá o modificá el plan desde la pestaña Planes.
               </p>
 
-              {/* Grid 2×2 de comidas */}
               <div className="reporte-plan-grid">
                 {MEALS.map((meal) => (
                   <MealCard
                     key={meal.id}
-                    emoji={meal.emoji}
                     title={meal.label}
                     content={ultimoPlan[meal.id]}
                   />
                 ))}
               </div>
 
-              {/* Indicaciones generales del plan */}
               {ultimoPlan.indicaciones?.trim() && (
                 <>
                   <h3 style={{
-                    marginTop: 'var(--space-4)',
-                    marginBottom: 'var(--space-2)',
-                    fontSize: 'var(--text-xs)',
-                    fontWeight: 800,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.07em',
-                    color: '#2E7D32',
+                    marginTop:      'var(--space-4)',
+                    marginBottom:   'var(--space-2)',
+                    fontSize:       'var(--text-xs)',
+                    fontWeight:     800,
+                    textTransform:  'uppercase',
+                    letterSpacing:  '0.08em',
+                    color:          'var(--color-durazno-dark)',
                   }}>
-                    💡 Indicaciones Generales
+                    Indicaciones Generales
                   </h3>
                   <div className="reporte-notas">
                     {ultimoPlan.indicaciones}
@@ -549,9 +533,9 @@ export default function ExportarReporte() {
           )}
         </section>
 
-        {/* ────────────────────────────────────────────────────────────────
-            SECCIÓN 05 — NOTAS CLÍNICAS
-            ──────────────────────────────────────────────────────────────── */}
+        {/* ──────────────────────────────────────────────────────────────
+            05 — NOTAS CLÍNICAS · superficie neutral
+            ────────────────────────────────────────────────────────────── */}
         <section className="reporte-section" aria-label="Notas clínicas">
           <h2 className="reporte-section__title">
             <span className="reporte-section__num">05</span>
@@ -586,31 +570,28 @@ export default function ExportarReporte() {
           )}
         </section>
 
-        {/* ── Pie de página del documento ── */}
+        {/* Pie de página */}
         <footer className="reporte-footer">
           <div className="reporte-footer__rule" aria-hidden="true" />
           <div className="reporte-footer__content">
             <p className="reporte-footer__brand">
-              <span aria-hidden="true">🥗</span>
               NutriApp Profesional
             </p>
             <p className="reporte-footer__legal">
               Generado el {fechaStr}. Ref.&nbsp;{numeroRef.current}.<br />
               Documento confidencial de uso exclusivo del profesional habilitado.
-              Prohibida su reproducción sin autorización expresa. La información
-              contenida no reemplaza el criterio clínico del profesional tratante.
+              Prohibida su reproducción sin autorización expresa.
             </p>
           </div>
         </footer>
 
-      </div>{/* .reporte-doc */}
-    </div>/* .reporte-wrapper */
+      </div>
+    </div>
   )
 }
 
 // ─── Subcomponentes ──────────────────────────────────────────────────────────
 
-/** Campo de un perfil: etiqueta + valor (o "—" si está vacío). */
 function Field({ label, value }) {
   const isEmpty = value == null || value === ''
   return (
@@ -625,13 +606,11 @@ function Field({ label, value }) {
   )
 }
 
-/** Tarjeta de una comida del plan. */
-function MealCard({ emoji, title, content }) {
+function MealCard({ title, content }) {
   const hasContent = content?.trim()
   return (
     <div className="reporte-meal-card">
       <div className="reporte-meal-card__header">
-        <span className="reporte-meal-card__emoji" aria-hidden="true">{emoji}</span>
         <span className="reporte-meal-card__title">{title}</span>
       </div>
       {hasContent ? (
@@ -643,7 +622,6 @@ function MealCard({ emoji, title, content }) {
   )
 }
 
-/** Ícono de impresora. */
 function IconPrint() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"

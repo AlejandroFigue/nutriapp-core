@@ -1,26 +1,3 @@
-/**
- * App — shell principal de la PWA · NutriApp Profesional.
- *
- * Layout (position: fixed):
- *   ┌────────────────────────────────────────────┐  ← .app-header  (56px)
- *   │ 🥗 NutriApp  Profesional   [sync]  [☀/🌙]  │
- *   ├────────────────────────────────────────────┤
- *   │  Pacientes │  Agenda  │  Planes │ Reportes  │  ← .app-topnav (48px)
- *   │ ════════                                    │    indicador deslizante (spring)
- *   ├────────────────────────────────────────────┤
- *   │                <ruta activa>               │  ← .app-main (flex-1, scroll)
- *   └────────────────────────────────────────────┘
- *
- * Navegación:
- *   - 4 pestañas superiores (Pacientes / Agenda / Planes / Reportes)
- *   - Indicador deslizante: línea de 3px en el borde inferior del tab bar
- *     → `translateX(calc(N × 100%))` via CSS custom property `--active-tab`
- *     → Transición elástica: cubic-bezier(0.34, 1.56, 0.64, 1) — overshoot real
- *
- * Estado compartido (useUIStore.pacienteId):
- *   - Se establece cuando el profesional selecciona un paciente en /pacientes
- *   - Planes y Reportes lo leen automáticamente → datos del paciente correcto
- */
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
 import OfflineBanner from '@/components/OfflineBanner'
@@ -34,19 +11,15 @@ const Agenda          = lazy(() => import('@/routes/Agenda'))
 const Planes          = lazy(() => import('@/routes/Planes'))
 const ExportarReporte = lazy(() => import('@/components/ExportarReporte'))
 
-// ─── Navegación superior (4 pestañas) ────────────────────────────────────────
+// ─── Navegación — texto refinado, sin íconos ─────────────────────────────────
 
 const TOP_TABS = [
-  { to: '/pacientes', label: 'Pacientes', Icon: IconUsers },
-  { to: '/agenda',    label: 'Agenda',    Icon: IconCal   },
-  { to: '/planes',    label: 'Planes',    Icon: IconClip  },
-  { to: '/reportes',  label: 'Reportes',  Icon: IconDoc   },
+  { to: '/pacientes', label: 'Pacientes' },
+  { to: '/agenda',    label: 'Agenda'    },
+  { to: '/planes',    label: 'Planes'    },
+  { to: '/reportes',  label: 'Reportes'  },
 ]
 
-/**
- * Índice de la pestaña activa por ruta.
- * /exportar redirige a /reportes, pero si no ocurrió aún, lo mapea al mismo índice.
- */
 const ROUTE_INDEX = {
   '/pacientes': 0,
   '/agenda':    1,
@@ -63,23 +36,22 @@ export default function App() {
   const swUpdateAvailable    = useUIStore((s) => s.swUpdateAvailable)
   const aplicarActualizacion = useUIStore((s) => s.aplicarActualizacion)
 
-  const { pathname }  = useLocation()
-  const activeIndex   = ROUTE_INDEX[pathname] ?? 0
+  const { pathname } = useLocation()
+  const activeIndex  = ROUTE_INDEX[pathname] ?? 0
 
   return (
     <div className="app-shell">
 
-      {/* ── Gradientes de fondo — derivan suavemente (GPU-only, z-index: -1) ── */}
+      {/* Orbs de fondo pastel */}
       <div className="bg-orb bg-orb--1" aria-hidden="true" />
       <div className="bg-orb bg-orb--2" aria-hidden="true" />
       <div className="bg-orb bg-orb--3" aria-hidden="true" />
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          HEADER — brand + sync status + toggle de tema
-          ═══════════════════════════════════════════════════════════════════ */}
+      {/* ── Header ── */}
       <header className="app-header">
         <div className="app-header__brand">
-          <span className="app-header__logo" aria-hidden="true">🥗</span>
+          {/* Marca geométrica definida vía CSS ::after con la letra N */}
+          <span className="app-header__mark" aria-hidden="true" />
           <span className="app-header__name">NutriApp</span>
           <span className="app-header__tagline">Profesional</span>
         </div>
@@ -97,7 +69,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Banner: actualización de SW disponible ── */}
+      {/* Banner de actualización SW */}
       {swUpdateAvailable && (
         <div className="update-banner" role="alert" aria-live="polite">
           <span className="update-banner__text">
@@ -110,26 +82,17 @@ export default function App() {
         </div>
       )}
 
-      {/* Banner de conectividad — reposicionado bajo header via CSS */}
       <OfflineBanner />
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          NAVEGACIÓN SUPERIOR — 4 pestañas profesionales
-          ═══════════════════════════════════════════════════════════════════
-          El indicador deslizante (.app-topnav__indicator) lee --active-tab
-          y se desplaza con translateX(calc(N × 100%)).
-          La transición cubic-bezier(0.34, 1.56, 0.64, 1) tiene overshoot
-          real (efecto muelle) → animación elástica sin JS.
-          ═══════════════════════════════════════════════════════════════════ */}
+      {/* ── Navegación superior — pestañas de texto + indicador deslizante ── */}
       <nav
         className="app-topnav"
         style={{ '--active-tab': activeIndex }}
         aria-label="Navegación principal"
       >
-        {/* Indicador flotante — barra de 3 px que se desplaza físicamente */}
         <div className="app-topnav__indicator" aria-hidden="true" />
 
-        {TOP_TABS.map(({ to, label, Icon }) => (
+        {TOP_TABS.map(({ to, label }) => (
           <NavLink
             key={to}
             to={to}
@@ -137,17 +100,12 @@ export default function App() {
               `app-topnav__tab${isActive ? ' app-topnav__tab--active' : ''}`
             }
           >
-            <span className="app-topnav__tab-icon" aria-hidden="true">
-              <Icon />
-            </span>
             <span className="app-topnav__tab-label">{label}</span>
           </NavLink>
         ))}
       </nav>
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          CONTENIDO PRINCIPAL
-          ═══════════════════════════════════════════════════════════════════ */}
+      {/* ── Contenido principal ── */}
       <main className="app-main" id="main-content">
         <Suspense
           fallback={
@@ -159,21 +117,14 @@ export default function App() {
           }
         >
           <Routes>
-            {/* Ruta raíz → Pacientes */}
-            <Route path="/"           element={<Navigate to="/pacientes" replace />} />
-
-            {/* ── Pestañas principales ── */}
-            <Route path="/pacientes"  element={<Pacientes />} />
-            <Route path="/agenda"     element={<Agenda />} />
-            <Route path="/planes"     element={<Planes />} />
-            <Route path="/reportes"   element={<ExportarReporte />} />
-
-            {/* ── Compatibilidad con rutas heredadas ── */}
-            <Route path="/plan"       element={<Navigate to="/planes"   replace />} />
-            <Route path="/exportar"   element={<Navigate to="/reportes" replace />} />
-
-            {/* Catch-all */}
-            <Route path="*"           element={<Navigate to="/pacientes" replace />} />
+            <Route path="/"          element={<Navigate to="/pacientes" replace />} />
+            <Route path="/pacientes" element={<Pacientes />} />
+            <Route path="/agenda"    element={<Agenda />} />
+            <Route path="/planes"    element={<Planes />} />
+            <Route path="/reportes"  element={<ExportarReporte />} />
+            <Route path="/plan"      element={<Navigate to="/planes"   replace />} />
+            <Route path="/exportar"  element={<Navigate to="/reportes" replace />} />
+            <Route path="*"          element={<Navigate to="/pacientes" replace />} />
           </Routes>
         </Suspense>
       </main>
@@ -181,58 +132,7 @@ export default function App() {
   )
 }
 
-// ─── Íconos SVG inline (24 × 24, sin dependencias externas) ──────────────────
-
-function IconUsers() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  )
-}
-
-function IconCal() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8"  y1="2" x2="8"  y2="6" />
-      <line x1="3"  y1="10" x2="21" y2="10" />
-      <line x1="8"  y1="14" x2="8.01"  y2="14" strokeWidth="2.5" />
-      <line x1="12" y1="14" x2="12.01" y2="14" strokeWidth="2.5" />
-      <line x1="16" y1="14" x2="16.01" y2="14" strokeWidth="2.5" />
-    </svg>
-  )
-}
-
-function IconClip() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-      <line x1="9"  y1="12" x2="15" y2="12" />
-      <line x1="9"  y1="16" x2="13" y2="16" />
-    </svg>
-  )
-}
-
-function IconDoc() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="9"  y1="13" x2="15" y2="13" />
-      <line x1="9"  y1="17" x2="12" y2="17" />
-    </svg>
-  )
-}
+// ─── Íconos funcionales (tema y actualización) ───────────────────────────────
 
 function IconMoon() {
   return (
