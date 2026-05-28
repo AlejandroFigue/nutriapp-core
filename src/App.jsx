@@ -6,15 +6,17 @@ import { useUIStore } from '@/store/useUIStore'
 
 // ─── Rutas (lazy) ─────────────────────────────────────────────────────────────
 
-const Pacientes       = lazy(() => import('@/routes/Pacientes'))
-const Agenda          = lazy(() => import('@/routes/Agenda'))
-const Planes          = lazy(() => import('@/routes/Planes'))
-const ExportarReporte = lazy(() => import('@/components/ExportarReporte'))
+const Pacientes        = lazy(() => import('@/routes/Pacientes'))
+const Agenda           = lazy(() => import('@/routes/Agenda'))
+const Planes           = lazy(() => import('@/routes/Planes'))
+const ExportarReporte  = lazy(() => import('@/components/ExportarReporte'))
+const AnalysisDashboard = lazy(() => import('@/components/AnalysisDashboard'))
 
-// ─── Navegación — texto refinado, sin íconos ─────────────────────────────────
+// ─── Navegación ───────────────────────────────────────────────────────────────
 
 const TOP_TABS = [
   { to: '/pacientes', label: 'Pacientes' },
+  { to: '/analisis',  label: 'Análisis'  },
   { to: '/agenda',    label: 'Agenda'    },
   { to: '/planes',    label: 'Planes'    },
   { to: '/reportes',  label: 'Reportes'  },
@@ -22,10 +24,11 @@ const TOP_TABS = [
 
 const ROUTE_INDEX = {
   '/pacientes': 0,
-  '/agenda':    1,
-  '/planes':    2,
-  '/reportes':  3,
-  '/exportar':  3,
+  '/analisis':  1,
+  '/agenda':    2,
+  '/planes':    3,
+  '/reportes':  4,
+  '/exportar':  4,
 }
 
 // ─── Componente raíz ──────────────────────────────────────────────────────────
@@ -50,7 +53,6 @@ export default function App() {
       {/* ── Header ── */}
       <header className="app-header">
         <div className="app-header__brand">
-          {/* Marca geométrica definida vía CSS ::after con la letra N */}
           <span className="app-header__mark" aria-hidden="true" />
           <span className="app-header__name">NutriApp</span>
           <span className="app-header__tagline">Profesional</span>
@@ -84,7 +86,7 @@ export default function App() {
 
       <OfflineBanner />
 
-      {/* ── Navegación superior — pestañas de texto + indicador deslizante ── */}
+      {/* ── Navegación superior — 5 pestañas con indicador deslizante GPU ── */}
       <nav
         className="app-topnav"
         style={{ '--active-tab': activeIndex }}
@@ -117,14 +119,15 @@ export default function App() {
           }
         >
           <Routes>
-            <Route path="/"          element={<Navigate to="/pacientes" replace />} />
-            <Route path="/pacientes" element={<Pacientes />} />
-            <Route path="/agenda"    element={<Agenda />} />
-            <Route path="/planes"    element={<Planes />} />
-            <Route path="/reportes"  element={<ExportarReporte />} />
-            <Route path="/plan"      element={<Navigate to="/planes"   replace />} />
-            <Route path="/exportar"  element={<Navigate to="/reportes" replace />} />
-            <Route path="*"          element={<Navigate to="/pacientes" replace />} />
+            <Route path="/"           element={<Navigate to="/pacientes" replace />} />
+            <Route path="/pacientes"  element={<Pacientes />} />
+            <Route path="/analisis"   element={<AnalysisDashboard />} />
+            <Route path="/agenda"     element={<Agenda />} />
+            <Route path="/planes"     element={<Planes />} />
+            <Route path="/reportes"   element={<ExportarReporte />} />
+            <Route path="/plan"       element={<Navigate to="/planes"   replace />} />
+            <Route path="/exportar"   element={<Navigate to="/reportes" replace />} />
+            <Route path="*"           element={<Navigate to="/pacientes" replace />} />
           </Routes>
         </Suspense>
       </main>
@@ -132,7 +135,7 @@ export default function App() {
   )
 }
 
-// ─── Íconos funcionales (tema y actualización) ───────────────────────────────
+// ─── Íconos funcionales ───────────────────────────────────────────────────────
 
 function IconMoon() {
   return (

@@ -437,7 +437,7 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   z-index: calc(var(--z-banner) - 1);
   height: var(--topnav-h);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   align-items: stretch;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
@@ -445,12 +445,12 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   isolation: isolate;
 }
 
-/* Indicador deslizante — línea durazno con efecto muelle */
+/* Indicador deslizante — línea durazno con efecto muelle (1/5 = 20%) */
 .app-topnav__indicator {
   position: absolute;
   bottom: 0;
   left: 0;
-  width: 25%;
+  width: 20%;
   height: 2.5px;
   background: linear-gradient(
     90deg,
@@ -459,7 +459,7 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
     var(--color-durazno)       100%
   );
   border-radius: 2.5px 2.5px 0 0;
-  transform: translateX(calc(var(--active-tab, 0) * 100%));
+  transform: translate3d(calc(var(--active-tab, 0) * 100%), 0, 0);
   transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
   will-change: transform;
   pointer-events: none;
@@ -516,8 +516,11 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   letter-spacing: 0.02em;
 }
 
+@media (max-width: 479px) {
+  .app-topnav__tab-label { font-size: 0.68rem; letter-spacing: 0.01em; }
+}
 @media (max-width: 359px) {
-  .app-topnav__tab-label { font-size: var(--text-xs); }
+  .app-topnav__tab-label { font-size: 0.60rem; letter-spacing: 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

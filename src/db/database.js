@@ -1,15 +1,16 @@
 /**
- * database.js — NutriApp Profesional (Dexie 3.x)
+ * database.js — NutriApp Profesional (Dexie 4.x)
  *
  * Cadena de versiones inmutable — NUNCA modificar una versión ya deployada:
  *
- *   v1  Baseline inicial (establece el origen del grafo de migraciones)
- *   v2  Esquema profesional completo con índices compuestos y sincronizado
- *   v3  Seed idempotente: inserta productos solo si la tabla está vacía
- *   v4  Agrega índice `origen` en productos; re-verifica seed para users
- *       que llegaron a v3 sin datos (populate del navigate.serviceWorker falló)
+ *   v1  Baseline inicial
+ *   v2  Esquema profesional completo con índices compuestos
+ *   v3  Seed idempotente de productos de Posadas, Misiones
+ *   v4  Índice `origen` + re-verificación del seed
  *
- * populate  Solo se ejecuta en bases de datos creadas desde cero (v0→vN).
+ * UpgradeError guard:
+ *   Si la apertura de la DB falla por inconsistencia de esquema o versión,
+ *   se elimina la base de datos y se recarga la página para reinicializar.
  *
  * Campos de costo regional (Posadas, CP 3300):
  *   precioRef        ARS del paquete de referencia
@@ -20,8 +21,6 @@
 import Dexie from 'dexie'
 
 // ── Seed de productos — Posadas, Misiones ─────────────────────────────────────
-// Declarado antes de los hooks de versión para que las callbacks de upgrade
-// puedan referenciarlo en el momento en que son ejecutadas por Dexie.
 
 export const PRODUCTOS_SEED_POSADAS = [
   // Almacén — Hipermercado Libertad / ChangoMás
@@ -40,7 +39,7 @@ export const PRODUCTOS_SEED_POSADAS = [
   { id: 'seed-pure-tomates',     nombre: 'Puré de tomates',    categoria: 'varios',    precioRef:  600, cantidadRefGramo:  520, origen: 'Hipermercado Libertad' },
   { id: 'seed-atun',             nombre: 'Atún',               categoria: 'proteinas', precioRef: 1100, cantidadRefGramo:  170, origen: 'Hipermercado Libertad' },
   { id: 'seed-frutos-secos',     nombre: 'Frutos secos',       categoria: 'snacks',    precioRef: 2400, cantidadRefGramo:  250, origen: 'Hipermercado Libertad' },
-  // Frescos — Mercado Central de Misiones (precio ya incluye +30 % minorista)
+  // Frescos — Mercado Central de Misiones (+30 % minorista incluido)
   { id: 'seed-pechuga-pollo',    nombre: 'Pechuga de pollo',   categoria: 'proteinas', precioRef: 2990, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-pollo',            nombre: 'Pollo',              categoria: 'proteinas', precioRef: 2470, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
   { id: 'seed-carne-molida',     nombre: 'Carne molida',       categoria: 'proteinas', precioRef: 3380, cantidadRefGramo: 1000, origen: 'Mercado Central Misiones' },
@@ -58,12 +57,10 @@ export const PRODUCTOS_SEED_POSADAS = [
 
 // ── Instancia Dexie ───────────────────────────────────────────────────────────
 
-const db = new Dexie('NutriAppDB')
+const NOMBRE_DB = 'NutriAppDB'
+const db = new Dexie(NOMBRE_DB)
 
 // ── v1: Baseline inicial ──────────────────────────────────────────────────────
-// Establece el punto de inicio del grafo de migraciones.
-// Es seguro agregarlo retroactivamente: Dexie nunca ejecuta migraciones de
-// versiones inferiores a la versión actual del navegador.
 db.version(1).stores({
   pacientes:  'id, nombre, email, telefono',
   historias:  'id, pacienteId, fecha',
@@ -75,8 +72,6 @@ db.version(1).stores({
 })
 
 // ── v2: Esquema profesional completo ─────────────────────────────────────────
-// Agrega índices compuestos para consultas por paciente+fecha y el campo
-// `sincronizado` para rastrear pendientes de sync en todas las tablas.
 db.version(2).stores({
   pacientes:  'id, nombre, email, telefono, sincronizado',
   historias:  'id, pacienteId, fecha, imc, sincronizado, [pacienteId+fecha]',
@@ -88,7 +83,6 @@ db.version(2).stores({
 })
 
 // ── v3: Seed idempotente ──────────────────────────────────────────────────────
-// Solo inserta si la tabla está vacía; nunca sobreescribe ediciones del usuario.
 db.version(3).upgrade(async (tx) => {
   const count = await tx.table('productos').count()
   if (count === 0) {
@@ -97,9 +91,6 @@ db.version(3).upgrade(async (tx) => {
 })
 
 // ── v4: Índice `origen` + re-verificación de seed ────────────────────────────
-// Añade el índice `origen` para filtrar por punto de venta (Libertad vs Mercado).
-// El re-check de seed cubre dispositivos que llegaron a v3 sin datos (ej: error
-// de red durante la primera carga, pruebas con DB vacía, etc.).
 db.version(4).stores({
   productos: 'id, nombre, categoria, origen',
 }).upgrade(async (tx) => {
@@ -109,10 +100,35 @@ db.version(4).stores({
   }
 })
 
-// Instalaciones nuevas: la DB se crea directamente en v4, populate reemplaza
-// los hooks de upgrade para la inicialización de datos iniciales.
+// Instalaciones nuevas — populate reemplaza los hooks de upgrade
 db.on('populate', async () => {
   await db.productos.bulkAdd(PRODUCTOS_SEED_POSADAS)
+})
+
+// ── UpgradeError guard ────────────────────────────────────────────────────────
+// Si la apertura falla por esquema corrupto o conflicto de versión,
+// se elimina la base de datos local y se recarga la página.
+db.open().catch(async (err) => {
+  const isFatal =
+    err.name === 'UpgradeError'      ||
+    err.name === 'InvalidStateError' ||
+    err.name === 'VersionError'      ||
+    String(err.message).includes('UpgradeError')
+
+  if (!isFatal) return
+
+  console.warn(
+    '[NutriAppDB] Error de versión — eliminando base de datos y reinicializando…',
+    err.message,
+  )
+
+  try {
+    await Dexie.delete(NOMBRE_DB)
+  } catch {
+    try { indexedDB.deleteDatabase(NOMBRE_DB) } catch { /* noop */ }
+  }
+
+  window.location.reload()
 })
 
 // ── Generador de IDs ──────────────────────────────────────────────────────────
@@ -133,15 +149,6 @@ async function registrarBackgroundSync() {
 
 // ── queueSyncTask ─────────────────────────────────────────────────────────────
 
-/**
- * Encola una operación en el outbox y registra Background Sync.
- * Llamar después de cada mutación offline-first sobre IndexedDB.
- *
- * @param {string}                     tabla
- * @param {'CREATE'|'UPDATE'|'DELETE'} accion
- * @param {object}                     datos
- * @returns {Promise<string>} UUID del ítem creado en outbox
- */
 export async function queueSyncTask(tabla, accion, datos) {
   const id = genId()
   await db.outbox.add({
@@ -204,13 +211,6 @@ class Outbox {
     })
   }
 
-  /**
-   * Procesa todos los ítems pendientes con apiFn.
-   * Si apiFn rechaza, el ítem se marca como fallido y se continúa.
-   *
-   * @param {(item: object) => Promise<void>} apiFn
-   * @returns {Promise<{completados: number, fallidos: number}>}
-   */
   async flush(apiFn) {
     const items = await this.pendientes()
     let completados = 0
