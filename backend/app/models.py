@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, Float, Integer, ForeignKey, Text
+from datetime import datetime
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey, Text
 from .database import Base
 
 # Estructuras relacionales idénticas a los almacenes indexados de IndexedDB (PWA)
@@ -38,3 +39,11 @@ class PlantillaPlan(Base):
     merienda = Column(Text, nullable=True)
     cena = Column(Text, nullable=True)
     consejos = Column(Text, nullable=True)
+
+
+class PacienteSincro(Base):
+    __tablename__ = "pacientes_sincro"
+    id = Column(String, primary_key=True)
+    nombre = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    ultima_actualizacion = Column(DateTime, default=datetime.utcnow)
