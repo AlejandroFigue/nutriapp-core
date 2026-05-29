@@ -15,8 +15,11 @@ import {
   getSeasonalContext,
   type PatientData,
   type AgentSuggestion,
+  type ActionPayload,
   type ExtendedAnalytics,
 } from '../services/ai/agent'
+// @ts-ignore — database.js is untyped JS
+import db, { genId } from '@/db/database'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -434,7 +437,102 @@ const COMPONENT_CSS = `
 .dark .cad__alert-banner { background: rgba(50,32,8,0.82); border-color: rgba(212,146,74,0.35); }
 .dark .cad__card-payload { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); }
 .dark .cad__chip--season { background: var(--color-surface); }
+
+/* ══ Toast ══════════════════════════════════════════════════════════════════ */
+.cad__toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 18px;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  pointer-events: none;
+  animation: cad-toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.cad__toast--success {
+  background: #2e7d32;
+  color: #fff;
+}
+.cad__toast--error {
+  background: var(--color-error, #b94a4a);
+  color: #fff;
+}
+@keyframes cad-toast-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
 `
+
+// ─── DB Helpers ───────────────────────────────────────────────────────────────
+
+function payloadToInstruction(payload: ActionPayload): string {
+  switch (payload.action) {
+    case 'adjust_macro': {
+      const dir = payload.direction === 'increase' ? 'Aumentar' : 'Reducir'
+      const base = `${dir} ${payload.nutrient}`
+      return payload.note ? `${base}: ${payload.note}` : base
+    }
+    case 'restrict_food':
+      return `Evitar: ${payload.foods.join(', ')}. (${payload.reason})`
+    case 'add_supplement':
+      return `Suplemento — ${payload.supplement} ${payload.dose}. ${payload.reason}`
+    case 'request_lab':
+      return `Solicitar${payload.urgency === 'urgent' ? ' [URGENTE]' : ''}: ${payload.tests.join(', ')}`
+    case 'schedule_followup':
+      return `Seguimiento en ${payload.days} días — ${payload.reason}`
+    case 'adjust_plan_text': {
+      const field = payload.field.charAt(0).toUpperCase() + payload.field.slice(1)
+      return `${field}: ${payload.suggestion}`
+    }
+    case 'lifestyle':
+      return payload.recommendation
+  }
+}
+
+/** Persiste la sugerencia aplicada en Dexie.
+ *  Para payloads que afectan el plan, appends a indicacionesIniciales del último plan del paciente.
+ *  Siempre registra la sugerencia como 'resolved' en clinicalSuggestions.
+ */
+async function applyPayloadToDB(patientId: string, suggestion: AgentSuggestion): Promise<void> {
+  const instruction = payloadToInstruction(suggestion.actionPayload)
+  const dexie = db as any
+
+  const PLAN_ACTIONS = ['adjust_macro', 'restrict_food', 'adjust_plan_text', 'lifestyle', 'add_supplement']
+  if (PLAN_ACTIONS.includes(suggestion.actionPayload.action)) {
+    const plans: any[] = await dexie.planes
+      .where('pacienteId').equals(patientId)
+      .sortBy('fecha')
+    if (plans.length > 0) {
+      const latest = plans[plans.length - 1]
+      const existing: string = latest.indicacionesIniciales ?? ''
+      const separator = existing.trimEnd().length > 0 ? '\n' : ''
+      await dexie.planes.update(latest.id, {
+        indicacionesIniciales: `${existing}${separator}• [IA] ${instruction}`,
+        sincronizado: 0,
+      })
+    }
+  }
+
+  await dexie.clinicalSuggestions.add({
+    id: genId(),
+    pacienteId: patientId,
+    suggestionId: suggestion.id,
+    title: suggestion.title,
+    type: suggestion.type,
+    priority: suggestion.priority,
+    actionPayload: JSON.stringify(suggestion.actionPayload),
+    status: 'resolved',
+    appliedAt: new Date().toISOString(),
+    createdAt: suggestion.createdAt,
+  })
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -485,10 +583,10 @@ interface SuggestionCardProps {
   suggestion: AgentSuggestion
   index: number
   state: CardState
-  onApply: (id: string) => void
+  onApply: (suggestion: AgentSuggestion) => void
   onEdit: (id: string, currentTitle: string) => void
   onSave: () => void
-  onDiscard: (id: string) => void
+  onDiscard: (suggestion: AgentSuggestion) => void
   onEditText: (id: string, text: string) => void
 }
 
@@ -564,7 +662,7 @@ function SuggestionCard({
       <div className="cad__card-actions">
         <button
           className="cad__btn cad__btn--apply"
-          onClick={() => onApply(s.id)}
+          onClick={() => onApply(s)}
           disabled={isApplied}
           aria-label={isApplied ? 'Sugerencia ya aplicada' : 'Aplicar sugerencia'}
           type="button"
@@ -581,7 +679,7 @@ function SuggestionCard({
         </button>
         <button
           className="cad__btn cad__btn--discard"
-          onClick={() => onDiscard(s.id)}
+          onClick={() => onDiscard(s)}
           aria-label="Descartar sugerencia"
           type="button"
         >
@@ -661,9 +759,36 @@ export default function ClinicalAnalysisDashboard({
 
   const cardState: CardState = { applied, discarded, editing, editTexts }
 
-  const handleApply = useCallback((id: string) => {
-    setApplied((prev) => new Set([...prev, id]))
-  }, [])
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3200)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  /** Acción unificada: aplica, edita o descarta una sugerencia clínica. */
+  const handleSuggestionAction = useCallback(
+    async (action: 'apply' | 'edit' | 'discard', suggestion: AgentSuggestion) => {
+      if (action === 'apply') {
+        try {
+          await applyPayloadToDB(patientData.id, suggestion)
+          setApplied((prev) => new Set([...prev, suggestion.id]))
+          setToast({ message: 'Sugerencia aplicada y guardada', type: 'success' })
+        } catch (err) {
+          console.error('[CAD] Error al aplicar sugerencia:', err)
+          setToast({ message: 'No se pudo guardar. Reintentá más tarde.', type: 'error' })
+        }
+      } else if (action === 'discard') {
+        setDiscarded((prev) => new Set([...prev, suggestion.id]))
+        setEditing((prev) => (prev === suggestion.id ? null : prev))
+      } else if (action === 'edit') {
+        setEditTexts((prev) => ({ ...prev, [suggestion.id]: prev[suggestion.id] ?? suggestion.title }))
+        setEditing(suggestion.id)
+      }
+    },
+    [patientData.id],
+  )
 
   const handleEdit = useCallback((id: string, current: string) => {
     setEditTexts((prev) => ({ ...prev, [id]: prev[id] ?? current }))
@@ -671,11 +796,6 @@ export default function ClinicalAnalysisDashboard({
   }, [])
 
   const handleSave = useCallback(() => setEditing(null), [])
-
-  const handleDiscard = useCallback((id: string) => {
-    setDiscarded((prev) => new Set([...prev, id]))
-    setEditing((prev) => (prev === id ? null : prev))
-  }, [])
 
   const handleEditText = useCallback((id: string, text: string) => {
     setEditTexts((prev) => ({ ...prev, [id]: text }))
@@ -766,10 +886,10 @@ export default function ClinicalAnalysisDashboard({
               suggestion={s}
               index={i}
               state={cardState}
-              onApply={handleApply}
+              onApply={(sg) => handleSuggestionAction('apply', sg)}
               onEdit={handleEdit}
               onSave={handleSave}
-              onDiscard={handleDiscard}
+              onDiscard={(sg) => handleSuggestionAction('discard', sg)}
               onEditText={handleEditText}
             />
           ))}
@@ -788,10 +908,10 @@ export default function ClinicalAnalysisDashboard({
               suggestion={s}
               index={i}
               state={cardState}
-              onApply={handleApply}
+              onApply={(sg) => handleSuggestionAction('apply', sg)}
               onEdit={handleEdit}
               onSave={handleSave}
-              onDiscard={handleDiscard}
+              onDiscard={(sg) => handleSuggestionAction('discard', sg)}
               onEditText={handleEditText}
             />
           ))}
@@ -810,13 +930,25 @@ export default function ClinicalAnalysisDashboard({
               suggestion={s}
               index={i}
               state={cardState}
-              onApply={handleApply}
+              onApply={(sg) => handleSuggestionAction('apply', sg)}
               onEdit={handleEdit}
               onSave={handleSave}
-              onDiscard={handleDiscard}
+              onDiscard={(sg) => handleSuggestionAction('discard', sg)}
               onEditText={handleEditText}
             />
           ))}
+        </div>
+      )}
+
+      {/* ── Toast de confirmación ── */}
+      {toast && (
+        <div
+          className={`cad__toast cad__toast--${toast.type}`}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.type === 'success' ? <IconCheckSmall /> : '⚠'}
+          {toast.message}
         </div>
       )}
 
