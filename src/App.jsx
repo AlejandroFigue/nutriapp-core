@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
 import OfflineBanner from '@/components/OfflineBanner'
 import SyncStatus    from '@/components/SyncStatus'
+import AgenteIA      from '@/components/AgenteIA'
 import { useUIStore } from '@/store/useUIStore'
 
 // ─── Rutas (lazy) ─────────────────────────────────────────────────────────────
@@ -85,6 +86,9 @@ export default function App() {
       )}
 
       <OfflineBanner />
+
+      {/* ── Copiloto IA — global, no intrusivo ── */}
+      <AgenteIA />
 
       {/* ── Navegación superior — 5 pestañas con indicador deslizante GPU ── */}
       <nav
