@@ -227,12 +227,6 @@ export default function PacienteForm({ pacienteId, onSaved }) {
 
       dispatchSave({ type: 'SAVED', id })
       onSaved?.({ id, ...payload })
-
-      // Reset solo en creación (en edición el drawer se cierra vía onSaved)
-      if (!esEdicion) {
-        setFields(FORM_VACIO)
-        setErrores({})
-      }
     } catch (err) {
       dispatchSave({ type: 'ERROR', message: err?.message ?? 'Error desconocido' })
     }

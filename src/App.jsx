@@ -39,8 +39,8 @@ export default function App() {
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     function handleFocusIn(e) {
       const el = e.target
-      if (el.matches('input, select, textarea')) {
-        el.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'nearest' })
+      if (el.matches('input, select, textarea, button')) {
+        el.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'center' })
       }
     }
     document.addEventListener('focusin', handleFocusIn)
