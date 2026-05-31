@@ -1,4 +1,4 @@
-import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-5gt-IOeK.js";const Q=`
+import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-D2PXe-Gk.js";const Q=`
 
 /* ── Layout raíz ────────────────────────────────────────────────────────── */
 .ag {
