@@ -25,6 +25,7 @@ import {
 import { liveQuery } from 'dexie'
 import { db } from '@/db/database'
 import PacienteForm from '@/components/PacienteForm'
+import EditPacienteFullscreen from '@/components/EditPacienteFullscreen'
 import { useUIStore } from '@/store/useUIStore'
 
 // ─── Hook: lista reactiva de pacientes desde IndexedDB ────────────────────────
@@ -148,39 +149,49 @@ export default function Pacientes() {
         <span>+ Registrar Nuevo Paciente</span>
       </button>
 
-      {/* ── Backdrop: overlay con desenfoque ─────────────────────────────────
+      {/* ── Editor pantalla completa — solo en modo edición ──────────────────
+          Se monta cuando drawerMounted && editId != null.
+          La animación de entrada/salida la controla isOpen.
+          ─────────────────────────────────────────────────────────────────── */}
+      {drawerMounted && editId && (
+        <EditPacienteFullscreen
+          key={editId}
+          pacienteId={editId}
+          isOpen={drawerOpen}
+          onClose={cerrarDrawer}
+          onSaved={handleSaved}
+        />
+      )}
+
+      {/* ── Backdrop: overlay con desenfoque — solo para nuevo paciente ──────
           pointer-events controlados por la clase --open en CSS.
           ─────────────────────────────────────────────────────────────────── */}
-      <div
-        className={`pac-backdrop${drawerOpen ? ' pac-backdrop--open' : ''}`}
-        onClick={cerrarDrawer}
-        aria-hidden="true"
-      />
+      {!editId && (
+        <div
+          className={`pac-backdrop${drawerOpen ? ' pac-backdrop--open' : ''}`}
+          onClick={cerrarDrawer}
+          aria-hidden="true"
+        />
+      )}
 
-      {/* ── Drawer lateral ───────────────────────────────────────────────────
+      {/* ── Drawer lateral — solo para nuevo paciente ────────────────────────
           Siempre en el DOM (position: fixed, off-screen cuando cerrado).
           inert previene foco/interacción cuando está cerrado.
           ─────────────────────────────────────────────────────────────────── */}
       <aside
-        className={`pac-drawer${drawerOpen ? ' pac-drawer--open' : ''}`}
+        className={`pac-drawer${drawerOpen && !editId ? ' pac-drawer--open' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label={editId ? 'Editar datos del paciente' : 'Registrar nuevo paciente'}
-        {...(!drawerOpen ? { inert: '' } : {})}
+        aria-label="Registrar nuevo paciente"
+        {...(!(drawerOpen && !editId) ? { inert: '' } : {})}
       >
         {/* Encabezado del panel */}
         <div className="pac-drawer__header">
           <div className="pac-drawer__header-left">
             <div className="pac-drawer__accent-bar" aria-hidden="true" />
             <div>
-              <h2 className="pac-drawer__title">
-                {editId ? 'Editar Paciente' : 'Nuevo Paciente'}
-              </h2>
-              <p className="pac-drawer__subtitle">
-                {editId
-                  ? 'Modificá los datos de la ficha clínica'
-                  : 'Completá los datos para crear la ficha'}
-              </p>
+              <h2 className="pac-drawer__title">Nuevo Paciente</h2>
+              <p className="pac-drawer__subtitle">Completá los datos para crear la ficha</p>
             </div>
           </div>
           <button
@@ -196,12 +207,11 @@ export default function Pacientes() {
         {/* Línea de acento degradada bajo el header */}
         <div className="pac-drawer__rule" aria-hidden="true" />
 
-        {/* Cuerpo desplazable — el formulario */}
+        {/* Cuerpo desplazable — formulario de creación */}
         <div className="pac-drawer__body">
-          {drawerMounted && (
+          {drawerMounted && !editId && (
             <PacienteForm
-              key={editId ?? 'new'} // Remonta el form si cambia el paciente objetivo
-              pacienteId={editId}
+              key="new"
               onSaved={handleSaved}
             />
           )}
