@@ -8,7 +8,7 @@
  * de conflicto (colisiones / saturación de agenda).
  *
  * Botonera reglamentaria para alertas: [Aplicar] · [Editar] · [Descartar]
- * Branding: Sparkles con degradado violeta→azul. Sin "copiloto" en la UI.
+ * Branding: Sparkles con degradado violeta→azul. Branding premium en la UI.
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react'

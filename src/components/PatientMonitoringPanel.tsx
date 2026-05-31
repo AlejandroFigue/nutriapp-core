@@ -7,7 +7,7 @@
  * Aplicar · Editar · Descartar para que la nutricionista conserve el control.
  *
  * Branding: icono Sparkles de lucide-react con degradado violeta-indigo → fucsia.
- * Sin referencias a "copiloto" / "copilot" en la UI.
+ * Branding premium: sin términos genéricos en la UI.
  * CSS inyectado una sola vez (id="pmp-styles") — mismo patrón que ClinicalAnalysisDashboard.
  */
 

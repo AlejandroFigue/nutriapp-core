@@ -11,7 +11,7 @@
  *   · mgmt-seasonal      → [Descartar]
  *
  * Branding: Sparkles violeta-600 → azul-500 (estilo diamante Gemini).
- * CSS inyectado una sola vez (id="mrp-styles"). Sin "copiloto" en la UI.
+ * CSS inyectado una sola vez (id="mrp-styles"). Branding premium en la UI.
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react'

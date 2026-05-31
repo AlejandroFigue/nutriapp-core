@@ -1,5 +1,5 @@
 /**
- * AgenteIA.jsx — Copiloto clínico flotante
+ * AgenteIA.jsx — Asistente Inteligente flotante
  *
  * Arquitectura:
  *   - Dock fijo bottom-right con backdrop-filter: blur
@@ -635,7 +635,7 @@ export default function AgenteIA() {
       <div
         className={`ia-panel ${abierto ? 'ia-panel--open' : 'ia-panel--closed'}`}
         role="complementary"
-        aria-label="Copiloto clínico IA"
+        aria-label="Asistente Inteligente IA"
         aria-hidden={!abierto}
         {...(!abierto ? { inert: '' } : {})}
       >
@@ -645,7 +645,7 @@ export default function AgenteIA() {
               <IconSparkle />
             </div>
             <div>
-              <div className="ia-panel__title">Copiloto Clínico</div>
+              <div className="ia-panel__title">Asistente Inteligente</div>
               <div className="ia-panel__context">
                 {paciente
                   ? [paciente.nombre, paciente.apellido].filter(Boolean).join(' ')
@@ -656,7 +656,7 @@ export default function AgenteIA() {
           <button
             className="ia-panel__close"
             onClick={() => setAbierto(false)}
-            aria-label="Cerrar copiloto"
+            aria-label="Cerrar Asistente Inteligente"
             type="button"
           >
             <IconX />
@@ -697,7 +697,7 @@ export default function AgenteIA() {
       <button
         className="ia-trigger"
         onClick={() => setAbierto((v) => !v)}
-        aria-label={abierto ? 'Cerrar copiloto IA' : 'Abrir copiloto IA'}
+        aria-label={abierto ? 'Cerrar Asistente Inteligente' : 'Abrir Asistente Inteligente'}
         aria-expanded={abierto}
         aria-controls="ia-panel"
         type="button"
@@ -706,7 +706,7 @@ export default function AgenteIA() {
           className={`ia-trigger__dot${alertCount > 0 ? ' ia-trigger__dot--alert' : ''}`}
           aria-hidden="true"
         />
-        Copiloto
+        Asistente
         {sugerencias.length > 0 && (
           <span
             className={`ia-trigger__badge${alertCount > 0 ? ' ia-trigger__badge--alert' : ''}`}

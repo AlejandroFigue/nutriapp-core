@@ -87,7 +87,7 @@ export default function App() {
 
       <OfflineBanner />
 
-      {/* ── Copiloto IA — global, no intrusivo ── */}
+      {/* ── Asistente Inteligente — global, no intrusivo ── */}
       <AgenteIA />
 
       {/* ── Navegación superior — 5 pestañas con indicador deslizante GPU ── */}
