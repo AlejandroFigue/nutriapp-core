@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
 import OfflineBanner from '@/components/OfflineBanner'
 import SyncStatus    from '@/components/SyncStatus'
@@ -35,6 +35,18 @@ const ROUTE_INDEX = {
 // ─── Componente raíz ──────────────────────────────────────────────────────────
 
 export default function App() {
+  useEffect(() => {
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    function handleFocusIn(e) {
+      const el = e.target
+      if (el.matches('input, select, textarea')) {
+        el.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'nearest' })
+      }
+    }
+    document.addEventListener('focusin', handleFocusIn)
+    return () => document.removeEventListener('focusin', handleFocusIn)
+  }, [])
+
   const theme                = useUIStore((s) => s.theme)
   const toggleTheme          = useUIStore((s) => s.toggleTheme)
   const swUpdateAvailable    = useUIStore((s) => s.swUpdateAvailable)
