@@ -26,6 +26,7 @@ import { useLocation } from 'react-router-dom'
 import { liveQuery } from 'dexie'
 import { db } from '@/db/database'
 import { useUIStore } from '@/store/useUIStore'
+import { analyzeClinicalData } from '@/services/ai/agent'
 
 // ─── CSS inyectado una sola vez ───────────────────────────────────────────────
 
@@ -419,17 +420,39 @@ function calcularIMC(pesoKg, alturaCm) {
   return +((p / ((a / 100) ** 2)).toFixed(1))
 }
 
-function clasificarIMC(imc) {
-  if (imc < 16)   return { label: 'Desnutrición severa', nivel: 'warn' }
-  if (imc < 18.5) return { label: 'Bajo peso',           nivel: 'alerta' }
-  if (imc < 25)   return { label: 'Normopeso',           nivel: 'info' }
-  if (imc < 30)   return { label: 'Sobrepeso',           nivel: 'alerta' }
-  if (imc < 35)   return { label: 'Obesidad grado I',    nivel: 'warn' }
-  if (imc < 40)   return { label: 'Obesidad grado II',   nivel: 'warn' }
-  return                  { label: 'Obesidad grado III',  nivel: 'warn' }
+// Adapta AgentSuggestion (agent.ts) al formato Sugerencia usado por las cards
+function adaptarAgentSugerencia(s) {
+  // Mapear priority + type → nivel CSS
+  let nivel = 'info'
+  if (s.priority === 'alta') {
+    nivel = s.type === 'alerta' ? 'warn' : 'alerta'
+  } else if (s.priority === 'media' && s.type !== 'recordatorio') {
+    nivel = 'alerta'
+  }
+
+  // Construir detalle desde description + payload
+  let detalle = s.description
+  const p = s.actionPayload
+  if (p.action === 'restrict_food') {
+    detalle += `\nEvitar: ${p.foods.join(', ')}.`
+  } else if (p.action === 'add_supplement') {
+    detalle += `\nSuplemento: ${p.supplement} — ${p.dose}`
+  } else if (p.action === 'request_lab') {
+    detalle += `\nSolicitar${p.urgency === 'urgent' ? ' [URGENTE]' : ''}: ${p.tests.join(', ')}.`
+  } else if (p.action === 'adjust_macro' && p.note) {
+    detalle += `\n${p.note}`
+  } else if (p.action === 'schedule_followup') {
+    detalle += `\nProgramar seguimiento en ${p.days} días.`
+  } else if (p.action === 'lifestyle') {
+    detalle += `\n${p.recommendation}`
+  }
+
+  const tipoLabel = { alerta: 'Alerta', ajuste: 'Ajuste', recordatorio: 'Recordatorio' }
+
+  return { id: s.id, nivel, tipo: tipoLabel[s.type] ?? 'Info', msg: s.title, detalle }
 }
 
-function generarSugerencias({ paciente, ultimaHistoria, ruta }) {
+function generarSugerencias({ paciente, ultimaHistoria, historias, ruta }) {
   if (!paciente) {
     return [{
       id: 'no-patient',
@@ -440,138 +463,42 @@ function generarSugerencias({ paciente, ultimaHistoria, ruta }) {
     }]
   }
 
-  const lista       = []
-  const condiciones = (paciente.condicionesMedicas ?? '').toLowerCase()
-  const alergias    = (paciente.alergias ?? '').toLowerCase()
-  const objetivo    = paciente.objetivo ?? ''
-  const imc         = calcularIMC(paciente.peso, paciente.altura)
-  const imcMostrar  = ultimaHistoria?.imc ?? imc
-
-  // ── Condiciones médicas ──────────────────────────────────────
-  if (condiciones.includes('hipert')) {
-    lista.push({
-      id: 'hipert',
-      nivel: 'alerta',
-      tipo: 'Alerta',
-      msg: 'Paciente hipertenso: reducir sodio por debajo de 2 g/día.',
-      detalle:
-        'Evitar carnes procesadas, enlatados y embutidos. Priorizar potasio (banana, espinaca, papa). Limitar sal de mesa a < 5 g/día.',
-    })
+  // Calcular días desde última consulta
+  let diasDesdeUltimaConsulta
+  if (ultimaHistoria?.fecha) {
+    diasDesdeUltimaConsulta = Math.floor(
+      (Date.now() - new Date(ultimaHistoria.fecha).getTime()) / 86_400_000
+    )
   }
 
-  if (condiciones.includes('diabet')) {
-    lista.push({
-      id: 'diabetes',
-      nivel: 'alerta',
-      tipo: 'Alerta',
-      msg: 'Paciente diabético: monitorear índice glucémico del plan.',
-      detalle:
-        'Priorizar hidratos complejos y fibra. Distribuir en 5-6 comidas diarias. Evitar azúcares simples y bebidas azucaradas.',
-    })
+  // Construir PatientData para el motor clínico
+  const patientData = {
+    id:                  paciente.id,
+    nombre:              paciente.nombre,
+    apellido:            paciente.apellido,
+    fechaNacimiento:     paciente.fechaNacimiento,
+    genero:              paciente.genero,
+    peso:                Number(paciente.peso)   || undefined,
+    altura:              Number(paciente.altura) || undefined,
+    objetivo:            paciente.objetivo,
+    condicionesMedicas:  paciente.condicionesMedicas,
+    alergias:            paciente.alergias,
+    historia:            ultimaHistoria ?? undefined,
+    historias:           historias?.length >= 2 ? historias : undefined,
+    diasDesdeUltimaConsulta,
   }
 
-  if (condiciones.includes('celiaq') || alergias.includes('gluten') || alergias.includes('tacc')) {
-    lista.push({
-      id: 'celiaco',
-      nivel: 'warn',
-      tipo: 'Restricción',
-      msg: 'Paciente celíaco: eliminar todo gluten del plan alimentario.',
-      detalle:
-        'Verificar etiquetas de cada producto. Reemplazar harinas y pastas con versiones certificadas sin TACC (arroz, maíz, mandioca, quínoa).',
-    })
-  }
+  const lista = analyzeClinicalData(patientData).map(adaptarAgentSugerencia)
 
-  if (condiciones.includes('renal') || condiciones.includes('riñon') || condiciones.includes('riñón')) {
-    lista.push({
-      id: 'renal',
-      nivel: 'warn',
-      tipo: 'Restricción',
-      msg: 'Función renal comprometida: restringir proteínas y fósforo.',
-      detalle:
-        'Limitar proteínas a 0.6–0.8 g/kg/día según estadio de ERC. Reducir potasio si hay hipercalemia y fósforo en alimentos procesados.',
-    })
-  }
-
-  if (condiciones.includes('tiroides') || condiciones.includes('hipotiro') || condiciones.includes('hipertiro')) {
-    lista.push({
-      id: 'tiroides',
-      nivel: 'info',
-      tipo: 'Info',
-      msg: 'Patología tiroidea: considerar interferentes en absorción de medicación.',
-      detalle:
-        'Evitar soja, fibra en exceso y calcio en las 1-2 h posteriores a la toma de levotiroxina. Adecuar yodo según el tipo de disfunción.',
-    })
-  }
-
-  if (alergias.includes('lactosa') || condiciones.includes('intolerancia a la lactosa')) {
-    lista.push({
-      id: 'lactosa',
-      nivel: 'info',
-      tipo: 'Restricción',
-      msg: 'Intolerancia a la lactosa: sustituir lácteos convencionales.',
-      detalle:
-        'Usar bebidas vegetales (avena, almendra) o lácteos sin lactosa. Garantizar calcio por otras fuentes: sardina, brócoli, semillas de sésamo.',
-    })
-  }
-
-  // ── IMC ──────────────────────────────────────────────────────
-  if (imc) {
-    const clase = clasificarIMC(imc)
-    if (clase.nivel !== 'info') {
-      lista.push({
-        id: 'imc',
-        nivel: clase.nivel,
-        tipo: 'IMC',
-        msg: `${clase.label} detectado (IMC ${imcMostrar}).`,
-        detalle:
-          imc < 18.5
-            ? 'Plantear hipercaloría saludable: frutos secos, palta, aceite de oliva, legumbres. Aumentar gradualmente 300-500 kcal/día.'
-            : 'Diseñar déficit moderado (−300 a −500 kcal/día). Mantener proteínas altas (≥1.2 g/kg) para preservar masa muscular.',
-      })
-    }
-  }
-
-  // ── Objetivo ─────────────────────────────────────────────────
-  if (objetivo === 'musculo') {
-    lista.push({
-      id: 'obj-musculo',
-      nivel: 'info',
-      tipo: 'Objetivo',
-      msg: 'Ganancia muscular: asegurar ≥ 1.6 g de proteína/kg/día.',
-      detalle:
-        'Distribuir proteínas en ≥4 ingestas diarias. Incluir carbohidratos de calidad post-entrenamiento. Superávit calórico de +200 a +300 kcal/día.',
-    })
-  }
-  if (objetivo === 'bajar') {
-    lista.push({
-      id: 'obj-bajar',
-      nivel: 'info',
-      tipo: 'Objetivo',
-      msg: 'Descenso de peso: déficit sostenible con proteína alta.',
-      detalle:
-        'Proteína ≥ 1.2 g/kg para reducir catabolismo. Priorizar saciedad: fibra, volumen alimentario y tiempos de comida regulares.',
-    })
-  }
-  if (objetivo === 'subir') {
-    lista.push({
-      id: 'obj-subir',
-      nivel: 'info',
-      tipo: 'Objetivo',
-      msg: 'Ganancia de peso: superávit de +300 a +500 kcal/día.',
-      detalle:
-        'Agregar colaciones densas en energía. Priorizar hipercalóricos saludables: palta, frutos secos, batata, avena, aceite de oliva.',
-    })
-  }
-
-  // ── Contexto por ruta activa ──────────────────────────────────
+  // Sugerencias contextuales por ruta (no clínicas)
+  const imc = calcularIMC(paciente.peso, paciente.altura)
   if (ruta === '/analisis' && imc) {
     lista.push({
       id: 'ctx-analisis',
       nivel: 'info',
       tipo: 'Análisis',
       msg: 'Revisá evolución de peso y composición corporal en los gráficos.',
-      detalle:
-        'Los donuts reflejan el plan alimentario actual. Comparar IMC y RCC con la última historia clínica para evaluar tendencia.',
+      detalle: 'Los donuts reflejan el plan alimentario actual. Comparar IMC y RCC con la última historia clínica para evaluar tendencia.',
     })
   }
   if (ruta === '/planes') {
@@ -580,8 +507,7 @@ function generarSugerencias({ paciente, ultimaHistoria, ruta }) {
       nivel: 'info',
       tipo: 'Plan',
       msg: 'Al asignar el plan, verificar adecuación a las restricciones del paciente.',
-      detalle:
-        'El motor de costos usa precios regionales de Posadas. El reporte PDF incluye desglose económico por comida para facilitar la adherencia.',
+      detalle: 'El motor de costos usa precios regionales de Posadas. El reporte PDF incluye desglose económico por comida para facilitar la adherencia.',
     })
   }
 
@@ -592,15 +518,14 @@ function generarSugerencias({ paciente, ultimaHistoria, ruta }) {
     nivel: 'info',
     tipo: 'Estado',
     msg: `Sin alertas para ${[paciente.nombre, paciente.apellido].filter(Boolean).join(' ')}.`,
-    detalle:
-      'Los parámetros clínicos registrados están dentro de rangos esperados para el objetivo declarado.',
+    detalle: 'Los parámetros clínicos registrados están dentro de rangos esperados para el objetivo declarado.',
   }]
 }
 
 // ─── Hook: carga reactiva del paciente activo ─────────────────────────────────
 
 function usePacienteActivo(pacienteId) {
-  const snap = useRef({ paciente: null, ultimaHistoria: null })
+  const snap = useRef({ paciente: null, ultimaHistoria: null, historias: [] })
 
   const obs = useMemo(() => {
     if (!pacienteId) return null
@@ -609,17 +534,15 @@ function usePacienteActivo(pacienteId) {
         db.pacientes.get(pacienteId),
         db.historias.where('pacienteId').equals(pacienteId).sortBy('fecha'),
       ])
-      const ultimaHistoria = historias?.length
-        ? historias[historias.length - 1]
-        : null
-      return { paciente: paciente ?? null, ultimaHistoria }
+      const ultimaHistoria = historias?.length ? historias[historias.length - 1] : null
+      return { paciente: paciente ?? null, ultimaHistoria, historias: historias ?? [] }
     })
   }, [pacienteId])
 
   const subscribe = useCallback(
     (notify) => {
       if (!obs) {
-        snap.current = { paciente: null, ultimaHistoria: null }
+        snap.current = { paciente: null, ultimaHistoria: null, historias: [] }
         notify()
         return () => {}
       }
@@ -635,7 +558,7 @@ function usePacienteActivo(pacienteId) {
   return useSyncExternalStore(
     subscribe,
     () => snap.current,
-    () => ({ paciente: null, ultimaHistoria: null }),
+    () => ({ paciente: null, ultimaHistoria: null, historias: [] }),
   )
 }
 
@@ -650,7 +573,7 @@ export default function AgenteIA() {
 
   const pacienteId              = useUIStore((s) => s.pacienteId)
   const { pathname }            = useLocation()
-  const { paciente, ultimaHistoria } = usePacienteActivo(pacienteId)
+  const { paciente, ultimaHistoria, historias } = usePacienteActivo(pacienteId)
 
   // Inyectar CSS una sola vez
   useEffect(() => {
@@ -670,8 +593,8 @@ export default function AgenteIA() {
   }, [pacienteId])
 
   const todasSugerencias = useMemo(
-    () => generarSugerencias({ paciente, ultimaHistoria, ruta: pathname }),
-    [paciente, ultimaHistoria, pathname],
+    () => generarSugerencias({ paciente, ultimaHistoria, historias, ruta: pathname }),
+    [paciente, ultimaHistoria, historias, pathname],
   )
 
   const sugerencias = useMemo(

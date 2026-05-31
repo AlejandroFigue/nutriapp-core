@@ -100,6 +100,11 @@ db.version(4).stores({
   }
 })
 
+// ── v5: Historial de sugerencias clínicas aplicadas ───────────────────────────
+db.version(5).stores({
+  clinicalSuggestions: 'id, pacienteId, suggestionId, status, appliedAt, [pacienteId+status]',
+})
+
 // Instalaciones nuevas — populate reemplaza los hooks de upgrade
 db.on('populate', async () => {
   await db.productos.bulkAdd(PRODUCTOS_SEED_POSADAS)
