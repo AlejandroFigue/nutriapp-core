@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import OfflineBanner from '@/components/OfflineBanner'
 import SyncStatus    from '@/components/SyncStatus'
 import AgenteIA      from '@/components/AgenteIA'
@@ -7,6 +7,7 @@ import { useUIStore } from '@/store/useUIStore'
 
 // ─── Rutas (lazy) ─────────────────────────────────────────────────────────────
 
+const HomeDashboard    = lazy(() => import('@/components/HomeDashboard'))
 const Pacientes        = lazy(() => import('@/routes/Pacientes'))
 const Agenda           = lazy(() => import('@/routes/Agenda'))
 const Planes           = lazy(() => import('@/routes/Planes'))
@@ -16,6 +17,7 @@ const AnalysisDashboard = lazy(() => import('@/components/AnalysisDashboard'))
 // ─── Navegación ───────────────────────────────────────────────────────────────
 
 const TOP_TABS = [
+  { to: '/inicio',    label: 'Inicio'    },
   { to: '/pacientes', label: 'Pacientes' },
   { to: '/analisis',  label: 'Análisis'  },
   { to: '/agenda',    label: 'Agenda'    },
@@ -24,12 +26,13 @@ const TOP_TABS = [
 ]
 
 const ROUTE_INDEX = {
-  '/pacientes': 0,
-  '/analisis':  1,
-  '/agenda':    2,
-  '/planes':    3,
-  '/reportes':  4,
-  '/exportar':  4,
+  '/inicio':    0,
+  '/pacientes': 1,
+  '/analisis':  2,
+  '/agenda':    3,
+  '/planes':    4,
+  '/reportes':  5,
+  '/exportar':  5,
 }
 
 // ─── Componente raíz ──────────────────────────────────────────────────────────
@@ -53,7 +56,10 @@ export default function App() {
   const aplicarActualizacion = useUIStore((s) => s.aplicarActualizacion)
 
   const { pathname } = useLocation()
+  const navigate     = useNavigate()
   const activeIndex  = ROUTE_INDEX[pathname] ?? 0
+
+  const handleNewPatient = () => navigate('/pacientes')
 
   return (
     <div className="app-shell">
@@ -102,7 +108,7 @@ export default function App() {
       {/* ── Asistente Inteligente — global, no intrusivo ── */}
       <AgenteIA />
 
-      {/* ── Navegación superior — 5 pestañas con indicador deslizante GPU ── */}
+      {/* ── Navegación superior — 6 pestañas con indicador deslizante GPU ── */}
       <nav
         className="app-topnav"
         style={{ '--active-tab': activeIndex }}
@@ -135,7 +141,8 @@ export default function App() {
           }
         >
           <Routes>
-            <Route path="/"           element={<Navigate to="/pacientes" replace />} />
+            <Route path="/"           element={<Navigate to="/inicio"   replace />} />
+            <Route path="/inicio"     element={<HomeDashboard onNewPatient={handleNewPatient} />} />
             <Route path="/pacientes"  element={<Pacientes />} />
             <Route path="/analisis"   element={<AnalysisDashboard />} />
             <Route path="/agenda"     element={<Agenda />} />
@@ -143,7 +150,7 @@ export default function App() {
             <Route path="/reportes"   element={<ExportarReporte />} />
             <Route path="/plan"       element={<Navigate to="/planes"   replace />} />
             <Route path="/exportar"   element={<Navigate to="/reportes" replace />} />
-            <Route path="*"           element={<Navigate to="/pacientes" replace />} />
+            <Route path="*"           element={<Navigate to="/inicio"   replace />} />
           </Routes>
         </Suspense>
       </main>

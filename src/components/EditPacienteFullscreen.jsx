@@ -1,29 +1,20 @@
 /**
- * EditPacienteFullscreen — Historia Clínica completa, pantalla entera.
+ * EditPacienteFullscreen v2 — Historia Clínica pantalla entera
  *
- * Estructura visual:
- *   ┌─ HEADER fijo ─────────────────────────────────────────────────────────┐
- *   │  ✦ Sparkles   Edición de Historia Clínica   [SyncChip] [Guardar] [✕] │
- *   └───────────────────────────────────────────────────────────────────────┘
- *   ┌─ COLUMNA IZQUIERDA ──────────┬─ COLUMNA DERECHA (Analíticas) ─────────┐
- *   │  Datos personales            │  Metabolismo                           │
- *   │  Datos físicos + IMC         │  Hemograma & Hierro                    │
- *   │  Objetivos y salud           │  Perfil Lipídico                       │
- *   │  Notas clínicas              │  Función Renal / Hepática              │
- *   │                              │  Perfil Tiroideo                       │
- *   │                              │  Vitaminas & Minerales                 │
- *   └──────────────────────────────┴────────────────────────────────────────┘
+ * Layout:
+ *   ┌─ HEADER ─────────────────────────────────────────────────────┐
+ *   ├─ 1/3 Datos Personales/Físicos ─┬─ 2/3 Evolución Antropom. ──┤
+ *   │  nombre, apellido, email, tel  │  tabla de mediciones        │
+ *   │  fecha nac, género, peso, alt  │  microformulario nueva med. │
+ *   │  IMC automático                │  ── sticky footer ──────    │
+ *   │  objetivos, notas              │  [⚗ Agregar análisis]       │
+ *   └────────────────────────────────┴─────────────────────────────┘
+ *   [Modal análisis médicos — accordion 6 grupos]
  *
- * Persistencia:
- *   Los campos de laboratorio se almacenan en `paciente.laboratorio` como
- *   objeto plano en IndexedDB — no requiere migración de Dexie porque
- *   IndexedDB persiste campos arbitrarios sin necesidad de nuevos índices.
- *
- * Props:
- *   pacienteId : string          — UUID del paciente a editar
- *   isOpen     : boolean         — controla la animación de entrada/salida
- *   onClose    : () => void      — callback para cerrar
- *   onSaved    : (p) => void     — callback tras guardar exitosamente
+ * Persistencia Dexie (sin migración de esquema):
+ *   paciente.evoluciones      → array de mediciones antropométricas
+ *   paciente.analisisMedicos  → array de análisis de laboratorio con fecha
+ *   paciente.laboratorio      → objeto plano heredado (se pasa sin modificar)
  */
 import {
   useState,
@@ -35,8 +26,11 @@ import {
   useRef,
 } from 'react'
 import { liveQuery } from 'dexie'
-import { Sparkles, X, Save, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
-import { db, outbox } from '@/db/database'
+import {
+  Sparkles, X, Save, AlertCircle, Loader2, CheckCircle2,
+  Plus, Trash2, FlaskConical, ChevronDown, ChevronUp,
+} from 'lucide-react'
+import { db, outbox, genId } from '@/db/database'
 
 // ─── Hook: liveQuery → useSyncExternalStore ───────────────────────────────────
 
@@ -58,14 +52,14 @@ function useDexieLive(querier, deps, initial) {
   )
 }
 
-// ─── Constantes del formulario ────────────────────────────────────────────────
+// ─── Constantes ──────────────────────────────────────────────────────────────
 
 const GENEROS = [
-  { value: '',                   label: 'Seleccionar…' },
-  { value: 'femenino',           label: 'Femenino' },
-  { value: 'masculino',          label: 'Masculino' },
-  { value: 'otro',               label: 'Otro' },
-  { value: 'prefiero-no-decir',  label: 'Prefiero no decir' },
+  { value: '',                  label: 'Seleccionar…' },
+  { value: 'femenino',          label: 'Femenino' },
+  { value: 'masculino',         label: 'Masculino' },
+  { value: 'otro',              label: 'Otro' },
+  { value: 'prefiero-no-decir', label: 'Prefiero no decir' },
 ]
 
 const OBJETIVOS = [
@@ -92,118 +86,104 @@ const FORM_BASE_VACIO = {
   notas:              '',
 }
 
-const LABORATORIO_VACIO = {
+const MEDICION_VACIA = () => ({
+  fecha:              new Date().toISOString().split('T')[0],
+  peso:               '',
+  perimetroCintura:   '',
+  perimetroAbdomen:   '',
+  perimetroMuslo:     '',
+})
+
+const ANALISIS_VACIO = () => ({
+  fechaAnalisis:       '',
+  laboratorioNombre:   '',
   // Metabolismo
-  glucemia:      '',
-  hba1c:         '',
-  // Hemograma & Hierro
-  hemoglobina:   '',
-  ferritina:     '',
-  hierroSerico:  '',
-  // Perfil Lipídico
-  colesterolTotal: '',
-  trigliceridos:   '',
-  hdl:             '',
-  ldl:             '',
-  // Función Renal
-  urea:          '',
-  creatinina:    '',
-  // Función Hepática
-  got:           '',
-  gpt:           '',
-  // Perfil Tiroideo
-  tsh:           '',
-  t4:            '',
-  // Vitaminas & Minerales
-  vitaminaD:     '',
-  vitaminaB12:   '',
-  calcio:        '',
-  magnesio:      '',
-}
+  glucosa:             '',
+  hba1c:               '',
+  insulina:            '',
+  // Lípidos
+  colesterolTotal:     '',
+  hdl:                 '',
+  ldl:                 '',
+  trigliceridos:       '',
+  // Hepáticos
+  fosfatasaAlcalina:   '',
+  bilirrubinaTotal:    '',
+  bilirrubinaDirecta:  '',
+  got:                 '',
+  gpt:                 '',
+  // Renal
+  urea:                '',
+  acidoUrico:          '',
+  creatinina:          '',
+  // Hemograma
+  hemoglobina:         '',
+  hematocrito:         '',
+  globulosRojos:       '',
+  globulosBlancos:     '',
+  // Tiroideo
+  tsh:                 '',
+  t4Libre:             '',
+})
 
-// ─── Definición de grupos de laboratorio ─────────────────────────────────────
+// ─── Grupos de análisis médicos ───────────────────────────────────────────────
 
-const LAB_GROUPS = [
+const ANALISIS_GROUPS = [
   {
-    key: 'metabolismo',
-    label: 'Metabolismo',
-    color: '#8B5CF6',
-    bg: '#F5F3FF',
-    border: '#DDD6FE',
+    key: 'metabolismo', label: 'Metabolismo', color: '#8B5CF6',
+    bg: '#F5F3FF', border: '#DDD6FE',
     fields: [
-      { key: 'glucemia',  label: 'Glucemia en ayunas',          unit: 'mg/dL', ref: '70 – 99' },
-      { key: 'hba1c',     label: 'Hemoglobina Glicosilada (HbA1c)', unit: '%', ref: '< 5.7',  step: '0.1' },
+      { key: 'glucosa',  label: 'Glucosa',                     unit: 'mg/dL',   ref: '70–99' },
+      { key: 'hba1c',    label: 'Hemoglobina Glicosilada HbA1c', unit: '%',    ref: '< 5.7', step: '0.1' },
+      { key: 'insulina', label: 'Insulina',                    unit: 'µUI/mL',  ref: '2–25',  step: '0.1' },
     ],
   },
   {
-    key: 'hemograma',
-    label: 'Hemograma & Hierro',
-    color: '#EF4444',
-    bg: '#FFF5F5',
-    border: '#FECACA',
-    fields: [
-      { key: 'hemoglobina',  label: 'Hemoglobina',   unit: 'g/dL',   ref: '♀ 12–16 / ♂ 13.5–17.5', step: '0.1' },
-      { key: 'ferritina',    label: 'Ferritina',      unit: 'ng/mL',  ref: '12 – 300' },
-      { key: 'hierroSerico', label: 'Hierro sérico',  unit: 'µg/dL',  ref: '60 – 170' },
-    ],
-  },
-  {
-    key: 'lipidos',
-    label: 'Perfil Lipídico',
-    color: '#F59E0B',
-    bg: '#FFFBEB',
-    border: '#FDE68A',
+    key: 'lipidos', label: 'Lípidos', color: '#F59E0B',
+    bg: '#FFFBEB', border: '#FDE68A',
     fields: [
       { key: 'colesterolTotal', label: 'Colesterol Total', unit: 'mg/dL', ref: '< 200' },
-      { key: 'trigliceridos',   label: 'Triglicéridos',    unit: 'mg/dL', ref: '< 150' },
-      { key: 'hdl',             label: 'HDL',              unit: 'mg/dL', ref: '♀ > 55 / ♂ > 45' },
+      { key: 'hdl',             label: 'HDL',              unit: 'mg/dL', ref: '♀>55 / ♂>45' },
       { key: 'ldl',             label: 'LDL',              unit: 'mg/dL', ref: '< 100' },
+      { key: 'trigliceridos',   label: 'Triglicéridos',    unit: 'mg/dL', ref: '< 150' },
     ],
   },
   {
-    key: 'renal',
-    label: 'Función Renal',
-    color: '#10B981',
-    bg: '#F0FDF4',
-    border: '#BBF7D0',
+    key: 'hepaticos', label: 'Hepáticos', color: '#F97316',
+    bg: '#FFF7ED', border: '#FED7AA',
     fields: [
-      { key: 'urea',       label: 'Urea',       unit: 'mg/dL', ref: '10 – 50' },
-      { key: 'creatinina', label: 'Creatinina', unit: 'mg/dL', ref: '♀ 0.5–1.1 / ♂ 0.7–1.3', step: '0.01' },
+      { key: 'fosfatasaAlcalina',  label: 'Fosfatasa Alcalina',  unit: 'U/L',   ref: '44–147' },
+      { key: 'bilirrubinaTotal',   label: 'Bilirrubina Total',   unit: 'mg/dL', ref: '< 1.2',  step: '0.1' },
+      { key: 'bilirrubinaDirecta', label: 'Bilirrubina Directa', unit: 'mg/dL', ref: '< 0.3',  step: '0.01' },
+      { key: 'got',                label: 'GOT (AST)',            unit: 'U/L',   ref: '< 40' },
+      { key: 'gpt',                label: 'GPT (ALT)',            unit: 'U/L',   ref: '< 41' },
     ],
   },
   {
-    key: 'hepatica',
-    label: 'Función Hepática',
-    color: '#F97316',
-    bg: '#FFF7ED',
-    border: '#FED7AA',
+    key: 'renal', label: 'Renal', color: '#10B981',
+    bg: '#F0FDF4', border: '#BBF7D0',
     fields: [
-      { key: 'got', label: 'GOT (AST)', unit: 'U/L', ref: '< 40' },
-      { key: 'gpt', label: 'GPT (ALT)', unit: 'U/L', ref: '< 41' },
+      { key: 'urea',       label: 'Urea',        unit: 'mg/dL', ref: '10–50' },
+      { key: 'acidoUrico', label: 'Ácido Úrico', unit: 'mg/dL', ref: '♀3.5–6.0 / ♂4.0–7.0', step: '0.1' },
+      { key: 'creatinina', label: 'Creatinina',  unit: 'mg/dL', ref: '♀0.5–1.1 / ♂0.7–1.3',  step: '0.01' },
     ],
   },
   {
-    key: 'tiroides',
-    label: 'Perfil Tiroideo',
-    color: '#6366F1',
-    bg: '#EEF2FF',
-    border: '#C7D2FE',
+    key: 'hemograma', label: 'Hemograma', color: '#EF4444',
+    bg: '#FFF5F5', border: '#FECACA',
     fields: [
-      { key: 'tsh', label: 'TSH',      unit: 'mUI/L', ref: '0.4 – 4.0', step: '0.01' },
-      { key: 't4',  label: 'T4 libre', unit: 'ng/dL',  ref: '0.8 – 1.8', step: '0.01' },
+      { key: 'hemoglobina',    label: 'Hemoglobina',    unit: 'g/dL',      ref: '♀12–16 / ♂13.5–17.5', step: '0.1' },
+      { key: 'hematocrito',    label: 'Hematocrito',    unit: '%',          ref: '♀37–47 / ♂42–52',     step: '0.1' },
+      { key: 'globulosRojos',  label: 'Glóbulos Rojos', unit: '×10⁶/µL',   ref: '♀4.2–5.4 / ♂4.6–6.2', step: '0.01' },
+      { key: 'globulosBlancos',label: 'Glóbulos Blancos',unit: '×10³/µL',  ref: '4.5–11.0',             step: '0.1' },
     ],
   },
   {
-    key: 'micronutrientes',
-    label: 'Vitaminas & Minerales',
-    color: '#EC4899',
-    bg: '#FDF2F8',
-    border: '#FBCFE8',
+    key: 'tiroideo', label: 'Tiroideo', color: '#6366F1',
+    bg: '#EEF2FF', border: '#C7D2FE',
     fields: [
-      { key: 'vitaminaD',   label: 'Vitamina D',   unit: 'ng/mL',  ref: '> 30' },
-      { key: 'vitaminaB12', label: 'Vitamina B12', unit: 'pg/mL',  ref: '> 200' },
-      { key: 'calcio',      label: 'Calcio',        unit: 'mg/dL', ref: '8.5 – 10.5', step: '0.1' },
-      { key: 'magnesio',    label: 'Magnesio',      unit: 'mg/dL', ref: '1.7 – 2.2',  step: '0.01' },
+      { key: 'tsh',    label: 'TSH',      unit: 'mUI/L', ref: '0.4–4.0', step: '0.01' },
+      { key: 't4Libre',label: 'T4 Libre', unit: 'ng/dL', ref: '0.8–1.8', step: '0.01' },
     ],
   },
 ]
@@ -257,22 +237,39 @@ function imcLabel(imc) {
   return              { label: 'Obesidad',   color: '#EF4444' }
 }
 
+function fmtFecha(iso) {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, onSaved }) {
-  // Carga reactiva del paciente desde IndexedDB
   const pacienteDB = useDexieLive(
     () => db.pacientes.get(pacienteId),
     [pacienteId],
     null,
   )
 
+  // ── Estado formulario base ──────────────────────────────────────────────────
   const [base, setBase]       = useState(FORM_BASE_VACIO)
-  const [lab, setLab]         = useState(LABORATORIO_VACIO)
   const [errores, setErrores] = useState({})
   const [save, dispatchSave]  = useReducer(saveReducer, { phase: 'idle', error: null })
 
-  // Poblar formulario cuando carga el paciente
+  // ── Estado evolución antropométrica ────────────────────────────────────────
+  const [evoluciones,     setEvoluciones]     = useState([])
+  const [nuevaMedicion,   setNuevaMedicion]   = useState(MEDICION_VACIA)
+  const [medErrores,      setMedErrores]      = useState({})
+
+  // ── Estado análisis médicos ────────────────────────────────────────────────
+  const [analisisMedicos,   setAnalisisMedicos]   = useState([])
+  const [modalOpen,         setModalOpen]         = useState(false)
+  const [analisisActual,    setAnalisisActual]     = useState(ANALISIS_VACIO)
+  const [analisisErrores,   setAnalisisErrores]   = useState({})
+  const [accordionOpen,     setAccordionOpen]     = useState({ metabolismo: true })
+
+  // ── Poblar formulario desde DB ─────────────────────────────────────────────
   useEffect(() => {
     if (!pacienteDB) return
     setBase({
@@ -289,17 +286,11 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
       alergias:           pacienteDB.alergias           ?? '',
       notas:              pacienteDB.notas              ?? '',
     })
-    const l = pacienteDB.laboratorio ?? {}
-    setLab(
-      Object.fromEntries(
-        Object.keys(LABORATORIO_VACIO).map((k) => [
-          k, l[k] != null ? String(l[k]) : '',
-        ])
-      )
-    )
+    setEvoluciones(pacienteDB.evoluciones    ?? [])
+    setAnalisisMedicos(pacienteDB.analisisMedicos ?? [])
   }, [pacienteDB])
 
-  // Stats del outbox para el SyncChip
+  // ── Stats de outbox ────────────────────────────────────────────────────────
   const outboxStats = useDexieLive(
     () => {
       const id = save.pacienteId ?? pacienteId
@@ -319,13 +310,10 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
   )
 
   const sincronizado = pacienteDB?.sincronizado === 1
+  const imc          = calcIMC(base.peso, base.altura)
+  const imcInfo      = imcLabel(imc)
 
-  // IMC calculado en tiempo real
-  const imc      = calcIMC(base.peso, base.altura)
-  const imcInfo  = imcLabel(imc)
-
-  // ─── Handlers ──────────────────────────────────────────────────────────────
-
+  // ── Handlers formulario base ───────────────────────────────────────────────
   const handleBaseChange = useCallback((e) => {
     const { name, value } = e.target
     setBase((prev) => ({ ...prev, [name]: value }))
@@ -333,31 +321,95 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
     if (save.phase === 'saved') dispatchSave({ type: 'RESET' })
   }, [errores, save.phase])
 
-  const handleLabChange = useCallback((e) => {
+  // ── Handlers evolución ─────────────────────────────────────────────────────
+  const handleMedicionChange = useCallback((e) => {
     const { name, value } = e.target
-    setLab((prev) => ({ ...prev, [name]: value }))
+    setNuevaMedicion((prev) => ({ ...prev, [name]: value }))
+    if (medErrores[name]) setMedErrores((p) => { const n = { ...p }; delete n[name]; return n })
+  }, [medErrores])
+
+  const agregarMedicion = useCallback(() => {
+    if (!nuevaMedicion.fecha) {
+      setMedErrores({ fecha: 'La fecha es obligatoria' })
+      return
+    }
+    const entry = {
+      id: genId(),
+      ...nuevaMedicion,
+      peso:             numVal(nuevaMedicion.peso),
+      perimetroCintura: numVal(nuevaMedicion.perimetroCintura),
+      perimetroAbdomen: numVal(nuevaMedicion.perimetroAbdomen),
+      perimetroMuslo:   numVal(nuevaMedicion.perimetroMuslo),
+    }
+    setEvoluciones((prev) =>
+      [entry, ...prev].sort((a, b) => b.fecha.localeCompare(a.fecha))
+    )
+    setNuevaMedicion(MEDICION_VACIA())
+    setMedErrores({})
+    if (save.phase === 'saved') dispatchSave({ type: 'RESET' })
+  }, [nuevaMedicion, save.phase])
+
+  const eliminarMedicion = useCallback((id) => {
+    setEvoluciones((prev) => prev.filter((m) => m.id !== id))
     if (save.phase === 'saved') dispatchSave({ type: 'RESET' })
   }, [save.phase])
 
+  // ── Handlers modal análisis ────────────────────────────────────────────────
+  const abrirModal = useCallback(() => {
+    setAnalisisActual(ANALISIS_VACIO())
+    setAnalisisErrores({})
+    setAccordionOpen({ metabolismo: true })
+    setModalOpen(true)
+  }, [])
+
+  const cerrarModal = useCallback(() => setModalOpen(false), [])
+
+  const handleAnalisisChange = useCallback((e) => {
+    const { name, value } = e.target
+    setAnalisisActual((prev) => ({ ...prev, [name]: value }))
+    if (analisisErrores[name]) setAnalisisErrores((p) => { const n = { ...p }; delete n[name]; return n })
+  }, [analisisErrores])
+
+  const toggleAccordion = useCallback((key) => {
+    setAccordionOpen((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
+  const guardarAnalisis = useCallback(() => {
+    const errs = {}
+    if (!analisisActual.fechaAnalisis)             errs.fechaAnalisis     = 'La fecha es obligatoria'
+    if (!analisisActual.laboratorioNombre.trim())  errs.laboratorioNombre = 'El laboratorio es obligatorio'
+    if (Object.keys(errs).length) { setAnalisisErrores(errs); return }
+
+    const entry = { id: genId(), ...analisisActual }
+    setAnalisisMedicos((prev) =>
+      [entry, ...prev].sort((a, b) => b.fechaAnalisis.localeCompare(a.fechaAnalisis))
+    )
+    setModalOpen(false)
+    if (save.phase === 'saved') dispatchSave({ type: 'RESET' })
+  }, [analisisActual, save.phase])
+
+  const eliminarAnalisis = useCallback((id) => {
+    setAnalisisMedicos((prev) => prev.filter((a) => a.id !== id))
+    if (save.phase === 'saved') dispatchSave({ type: 'RESET' })
+  }, [save.phase])
+
+  // ── Guardar en Dexie ───────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (e) => {
     e?.preventDefault()
-
     const errs = validar(base)
     if (Object.keys(errs).length > 0) { setErrores(errs); return }
-
     dispatchSave({ type: 'SAVING' })
-
-    const labPayload = Object.fromEntries(
-      Object.entries(lab).map(([k, v]) => [k, numVal(v)])
-    )
 
     const payload = {
       ...base,
-      peso:          numVal(base.peso),
-      altura:        numVal(base.altura),
-      laboratorio:   labPayload,
-      sincronizado:  0,
-      actualizadoEn: new Date().toISOString(),
+      peso:           numVal(base.peso),
+      altura:         numVal(base.altura),
+      evoluciones,
+      analisisMedicos,
+      // Mantiene campo heredado sin modificar para compatibilidad con otros módulos
+      laboratorio:    pacienteDB?.laboratorio ?? {},
+      sincronizado:   0,
+      actualizadoEn:  new Date().toISOString(),
     }
 
     try {
@@ -369,10 +421,9 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
     } catch (err) {
       dispatchSave({ type: 'ERROR', message: err?.message ?? 'Error desconocido' })
     }
-  }, [base, lab, pacienteId, onSaved])
+  }, [base, evoluciones, analisisMedicos, pacienteDB, pacienteId, onSaved])
 
-  // ─── Bloqueo de scroll del body mientras está abierto ─────────────────────
-
+  // ── Scroll del body y tecla Escape ────────────────────────────────────────
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
@@ -380,19 +431,21 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
     }
   }, [isOpen])
 
-  // ─── Cerrar con Escape ────────────────────────────────────────────────────
-
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose?.() }
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        if (modalOpen) { cerrarModal(); return }
+        onClose?.()
+      }
+    }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [onClose])
+  }, [onClose, modalOpen, cerrarModal])
 
   const isSaving = save.phase === 'saving'
   const nombre   = [base.nombre, base.apellido].filter(Boolean).join(' ')
 
   // ─── Render ───────────────────────────────────────────────────────────────
-
   return (
     <div
       className={`epf-overlay${isOpen ? ' epf-overlay--open' : ''}`}
@@ -400,22 +453,17 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
       aria-modal="true"
       aria-label="Edición de Historia Clínica"
     >
-      {/* ── HEADER ── */}
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header className="epf-header">
-        {/* Izquierda: logo + título */}
         <div className="epf-header__left">
           <div className="epf-sparkles-badge" aria-hidden="true">
             <Sparkles size={18} strokeWidth={2} />
           </div>
           <div>
             <h2 className="epf-header__title">Edición de Historia Clínica</h2>
-            {nombre && (
-              <p className="epf-header__subtitle">{nombre}</p>
-            )}
+            {nombre && <p className="epf-header__subtitle">{nombre}</p>}
           </div>
         </div>
-
-        {/* Derecha: sync + guardar + cerrar */}
         <div className="epf-header__right">
           <SyncChip
             sincronizado={sincronizado}
@@ -429,47 +477,34 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
             className={`epf-save-btn${isSaving ? ' epf-save-btn--loading' : ''}`}
             disabled={isSaving}
           >
-            {isSaving ? (
-              <><Loader2 size={16} className="epf-spin" /><span>Guardando…</span></>
-            ) : (
-              <><Save size={16} /><span>Guardar cambios</span></>
-            )}
+            {isSaving
+              ? <><Loader2 size={16} className="epf-spin" /><span>Guardando…</span></>
+              : <><Save size={16} /><span>Guardar cambios</span></>
+            }
           </button>
-          <button
-            type="button"
-            className="epf-close-btn"
-            onClick={onClose}
-            aria-label="Cerrar editor"
-          >
+          <button type="button" className="epf-close-btn" onClick={onClose} aria-label="Cerrar editor">
             <X size={20} strokeWidth={2} />
           </button>
         </div>
       </header>
 
-      {/* ── DIVIDER ── */}
       <div className="epf-header__rule" aria-hidden="true" />
 
-      {/* ── CUERPO: dos columnas ── */}
-      <form
-        id="epf-form"
-        onSubmit={handleSubmit}
-        noValidate
-        className="epf-body"
-      >
-        {/* Columna izquierda — Datos base */}
-        <div className="epf-col epf-col--left">
+      {/* ── CUERPO: 1/3 + 2/3 ─────────────────────────────────────────────── */}
+      <form id="epf-form" onSubmit={handleSubmit} noValidate className="epf-body">
 
+        {/* ── COLUMNA IZQUIERDA — Datos del paciente (1/3) ─────────────────── */}
+        <div className="epf-col epf-col--left">
           <ColHeader icon="🗂️" title="Datos del Paciente" subtitle="Información clínica base" />
 
           {/* Datos personales */}
-          <LabSection label="Datos personales">
+          <Section label="Datos personales">
             <div className="epf-grid epf-grid--2">
               <BaseField id="nombre" name="nombre" label="Nombre *"
                 value={base.nombre} onChange={handleBaseChange} error={errores.nombre}
                 autoComplete="given-name" required />
               <BaseField id="apellido" name="apellido" label="Apellido"
-                value={base.apellido} onChange={handleBaseChange}
-                autoComplete="family-name" />
+                value={base.apellido} onChange={handleBaseChange} autoComplete="family-name" />
             </div>
             <div className="epf-grid epf-grid--2">
               <BaseField id="email" name="email" label="Email" type="email"
@@ -479,10 +514,10 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
                 value={base.telefono} onChange={handleBaseChange}
                 inputMode="tel" autoComplete="tel" />
             </div>
-          </LabSection>
+          </Section>
 
-          {/* Datos físicos */}
-          <LabSection label="Datos físicos">
+          {/* Datos físicos + IMC */}
+          <Section label="Datos físicos">
             <div className="epf-grid epf-grid--2">
               <BaseField id="fechaNacimiento" name="fechaNacimiento" label="Fecha de nacimiento"
                 type="date" value={base.fechaNacimiento} onChange={handleBaseChange} />
@@ -497,32 +532,35 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
               </div>
             </div>
             <div className="epf-grid epf-grid--2">
-              <BaseField id="peso" name="peso" label="Peso (kg)" type="number"
+              <BaseField id="peso" name="peso" label="Peso inicio (kg)" type="number"
                 min="0" max="500" step="0.1" inputMode="decimal" placeholder="70"
                 value={base.peso} onChange={handleBaseChange} error={errores.peso} />
-              <BaseField id="altura" name="altura" label="Altura (cm)" type="number"
+              <BaseField id="altura" name="altura" label="Altura inicio (cm)" type="number"
                 min="0" max="300" step="0.5" inputMode="decimal" placeholder="170"
                 value={base.altura} onChange={handleBaseChange} error={errores.altura} />
             </div>
-            {/* IMC calculado */}
+
             {imc && (
               <div className="epf-imc-badge">
-                <span className="epf-imc-badge__label">IMC calculado</span>
-                <span className="epf-imc-badge__value">{imc}</span>
+                <div className="epf-imc-badge__icon" aria-hidden="true">⚖️</div>
+                <div className="epf-imc-badge__data">
+                  <span className="epf-imc-badge__label">IMC calculado</span>
+                  <span className="epf-imc-badge__value">{imc} kg/m²</span>
+                </div>
                 {imcInfo && (
                   <span
                     className="epf-imc-badge__tag"
-                    style={{ background: imcInfo.color + '18', color: imcInfo.color }}
+                    style={{ background: imcInfo.color + '18', color: imcInfo.color, borderColor: imcInfo.color + '40' }}
                   >
                     {imcInfo.label}
                   </span>
                 )}
               </div>
             )}
-          </LabSection>
+          </Section>
 
           {/* Objetivos y salud */}
-          <LabSection label="Objetivos y salud">
+          <Section label="Objetivos y salud">
             <div className="epf-field">
               <label className="epf-label" htmlFor="objetivo">Objetivo nutricional</label>
               <select id="objetivo" name="objetivo" className="epf-input epf-input--select"
@@ -540,16 +578,15 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
               label="Alergias / intolerancias" tag="textarea" rows={2}
               placeholder="Lactosa, gluten…"
               value={base.alergias} onChange={handleBaseChange} />
-          </LabSection>
+          </Section>
 
           {/* Notas clínicas */}
-          <LabSection label="Notas clínicas">
+          <Section label="Notas clínicas">
             <BaseField id="notas" name="notas" label="Observaciones" tag="textarea" rows={3}
               placeholder="Observaciones adicionales…"
               value={base.notas} onChange={handleBaseChange} />
-          </LabSection>
+          </Section>
 
-          {/* Error global */}
           {save.phase === 'error' && (
             <div role="alert" className="epf-error-global">
               <AlertCircle size={16} aria-hidden="true" />
@@ -558,57 +595,289 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
           )}
         </div>
 
-        {/* Columna derecha — Analíticas de Laboratorio */}
-        <div className="epf-col epf-col--right">
+        {/* ── COLUMNA CENTRAL — Evolución Antropométrica (2/3) ─────────────── */}
+        <div className="epf-col epf-col--center">
+          <ColHeader icon="📈" title="Evolución Antropométrica" subtitle="Registro histórico de mediciones" />
 
-          <ColHeader icon="🧬" title="Analíticas de Laboratorio" subtitle="Valores médicos de referencia" />
+          {/* Tabla de evolución */}
+          <div className="epf-evo-wrap">
+            {evoluciones.length === 0 ? (
+              <div className="epf-evo-empty">
+                <span className="epf-evo-empty__icon">📏</span>
+                <p className="epf-evo-empty__text">Sin mediciones registradas. Agregá la primera abajo.</p>
+              </div>
+            ) : (
+              <div className="epf-evo-table-wrap">
+                <table className="epf-evo-table" aria-label="Historial de mediciones">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Peso (kg)</th>
+                      <th>Cintura (cm)</th>
+                      <th>Abdomen (cm)</th>
+                      <th>Muslo (cm)</th>
+                      <th aria-label="Acciones" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evoluciones.map((m) => (
+                      <tr key={m.id} className="epf-evo-row">
+                        <td className="epf-evo-td epf-evo-td--fecha">{fmtFecha(m.fecha)}</td>
+                        <td className="epf-evo-td epf-evo-td--num">{m.peso ?? '—'}</td>
+                        <td className="epf-evo-td epf-evo-td--num">{m.perimetroCintura ?? '—'}</td>
+                        <td className="epf-evo-td epf-evo-td--num">{m.perimetroAbdomen ?? '—'}</td>
+                        <td className="epf-evo-td epf-evo-td--num">{m.perimetroMuslo ?? '—'}</td>
+                        <td className="epf-evo-td epf-evo-td--action">
+                          <button
+                            type="button"
+                            className="epf-evo-del"
+                            onClick={() => eliminarMedicion(m.id)}
+                            aria-label={`Eliminar medición del ${fmtFecha(m.fecha)}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-          {LAB_GROUPS.map((group) => (
-            <LabGroupPanel key={group.key} group={group} values={lab} onChange={handleLabChange} />
-          ))}
+            {/* Microformulario nueva medición */}
+            <div className="epf-evo-add">
+              <p className="epf-evo-add__title">
+                <Plus size={13} aria-hidden="true" />
+                Nueva medición
+              </p>
+              <div className="epf-evo-add__grid">
+                <div className="epf-field">
+                  <label className="epf-label" htmlFor="med-fecha">
+                    Fecha *
+                  </label>
+                  <input
+                    id="med-fecha"
+                    name="fecha"
+                    type="date"
+                    className={`epf-input${medErrores.fecha ? ' epf-input--error' : ''}`}
+                    value={nuevaMedicion.fecha}
+                    onChange={handleMedicionChange}
+                    aria-describedby={medErrores.fecha ? 'med-fecha-err' : undefined}
+                  />
+                  {medErrores.fecha && (
+                    <span id="med-fecha-err" className="epf-field-error" role="alert">
+                      {medErrores.fecha}
+                    </span>
+                  )}
+                </div>
+                <div className="epf-field">
+                  <label className="epf-label" htmlFor="med-peso">Peso (kg)</label>
+                  <input id="med-peso" name="peso" type="number" min="0" max="500" step="0.1"
+                    inputMode="decimal" placeholder="70.5" className="epf-input"
+                    value={nuevaMedicion.peso} onChange={handleMedicionChange} />
+                </div>
+                <div className="epf-field">
+                  <label className="epf-label" htmlFor="med-cintura">Cintura (cm)</label>
+                  <input id="med-cintura" name="perimetroCintura" type="number" min="0" max="300" step="0.5"
+                    inputMode="decimal" placeholder="85" className="epf-input"
+                    value={nuevaMedicion.perimetroCintura} onChange={handleMedicionChange} />
+                </div>
+                <div className="epf-field">
+                  <label className="epf-label" htmlFor="med-abdomen">Abdomen (cm)</label>
+                  <input id="med-abdomen" name="perimetroAbdomen" type="number" min="0" max="300" step="0.5"
+                    inputMode="decimal" placeholder="90" className="epf-input"
+                    value={nuevaMedicion.perimetroAbdomen} onChange={handleMedicionChange} />
+                </div>
+                <div className="epf-field">
+                  <label className="epf-label" htmlFor="med-muslo">Muslo (cm)</label>
+                  <input id="med-muslo" name="perimetroMuslo" type="number" min="0" max="200" step="0.5"
+                    inputMode="decimal" placeholder="55" className="epf-input"
+                    value={nuevaMedicion.perimetroMuslo} onChange={handleMedicionChange} />
+                </div>
+                <div className="epf-field epf-field--btn-cell">
+                  <button type="button" className="epf-evo-add-btn" onClick={agregarMedicion}>
+                    <Plus size={15} /> Agregar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Resumen de análisis cargados */}
+            {analisisMedicos.length > 0 && (
+              <div className="epf-analisis-list">
+                <p className="epf-analisis-list__title">
+                  <FlaskConical size={13} aria-hidden="true" />
+                  Análisis registrados ({analisisMedicos.length})
+                </p>
+                {analisisMedicos.map((a) => (
+                  <div key={a.id} className="epf-analisis-chip">
+                    <span className="epf-analisis-chip__date">{fmtFecha(a.fechaAnalisis)}</span>
+                    <span className="epf-analisis-chip__lab">{a.laboratorioNombre}</span>
+                    <button
+                      type="button"
+                      className="epf-analisis-chip__del"
+                      onClick={() => eliminarAnalisis(a.id)}
+                      aria-label={`Eliminar análisis del ${fmtFecha(a.fechaAnalisis)}`}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Botón premium análisis médicos (sticky pie) ─────────────────── */}
+          <div className="epf-evo-footer">
+            <button type="button" className="epf-analysis-btn" onClick={abrirModal}>
+              <span className="epf-analysis-btn__icon" aria-hidden="true">
+                <FlaskConical size={18} strokeWidth={2} />
+              </span>
+              <span className="epf-analysis-btn__content">
+                <span className="epf-analysis-btn__label">Agregar análisis médicos</span>
+                <span className="epf-analysis-btn__sub">
+                  Laboratorio · fecha · valores clínicos
+                </span>
+              </span>
+              <span className="epf-analysis-btn__arrow" aria-hidden="true">→</span>
+            </button>
+          </div>
         </div>
       </form>
+
+      {/* ── MODAL ANÁLISIS MÉDICOS ────────────────────────────────────────────── */}
+      {modalOpen && (
+        <div className="epf-modal-backdrop" role="dialog" aria-modal="true" aria-label="Agregar análisis médicos">
+          <div className="epf-modal">
+            {/* Header modal */}
+            <div className="epf-modal-header">
+              <div className="epf-modal-header__left">
+                <span className="epf-modal-header__icon" aria-hidden="true">
+                  <FlaskConical size={20} />
+                </span>
+                <div>
+                  <h3 className="epf-modal-header__title">Agregar análisis médicos</h3>
+                  <p className="epf-modal-header__sub">Completá los valores del laboratorio</p>
+                </div>
+              </div>
+              <button type="button" className="epf-close-btn" onClick={cerrarModal} aria-label="Cerrar modal">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="epf-modal-rule" aria-hidden="true" />
+
+            {/* Cuerpo modal */}
+            <div className="epf-modal-body">
+              {/* Campos obligatorios */}
+              <div className="epf-modal-req">
+                <p className="epf-modal-req__label">Datos del análisis</p>
+                <div className="epf-modal-req__grid">
+                  <div className="epf-field">
+                    <label className="epf-label" htmlFor="an-fecha">Fecha de análisis *</label>
+                    <input
+                      id="an-fecha"
+                      name="fechaAnalisis"
+                      type="date"
+                      className={`epf-input${analisisErrores.fechaAnalisis ? ' epf-input--error' : ''}`}
+                      value={analisisActual.fechaAnalisis}
+                      onChange={handleAnalisisChange}
+                    />
+                    {analisisErrores.fechaAnalisis && (
+                      <span className="epf-field-error" role="alert">{analisisErrores.fechaAnalisis}</span>
+                    )}
+                  </div>
+                  <div className="epf-field">
+                    <label className="epf-label" htmlFor="an-lab">Laboratorio *</label>
+                    <input
+                      id="an-lab"
+                      name="laboratorioNombre"
+                      type="text"
+                      placeholder="Ej: Lab. Central Posadas"
+                      className={`epf-input${analisisErrores.laboratorioNombre ? ' epf-input--error' : ''}`}
+                      value={analisisActual.laboratorioNombre}
+                      onChange={handleAnalisisChange}
+                    />
+                    {analisisErrores.laboratorioNombre && (
+                      <span className="epf-field-error" role="alert">{analisisErrores.laboratorioNombre}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Accordion de grupos */}
+              <div className="epf-accordion">
+                {ANALISIS_GROUPS.map((group) => {
+                  const open = !!accordionOpen[group.key]
+                  return (
+                    <div
+                      key={group.key}
+                      className={`epf-accordion-item${open ? ' epf-accordion-item--open' : ''}`}
+                      style={{ '--group-color': group.color, '--group-bg': group.bg, '--group-border': group.border }}
+                    >
+                      <button
+                        type="button"
+                        className="epf-accordion-trigger"
+                        onClick={() => toggleAccordion(group.key)}
+                        aria-expanded={open}
+                      >
+                        <span className="epf-accordion-trigger__dot" aria-hidden="true" />
+                        <span className="epf-accordion-trigger__label">{group.label}</span>
+                        <span className="epf-accordion-trigger__count">
+                          {group.fields.filter((f) => analisisActual[f.key] !== '').length}/{group.fields.length}
+                        </span>
+                        {open
+                          ? <ChevronUp size={15} aria-hidden="true" className="epf-accordion-trigger__chevron" />
+                          : <ChevronDown size={15} aria-hidden="true" className="epf-accordion-trigger__chevron" />
+                        }
+                      </button>
+                      {open && (
+                        <div className="epf-accordion-body">
+                          <div className="epf-accordion-fields">
+                            {group.fields.map((field) => (
+                              <ModalLabField
+                                key={field.key}
+                                field={field}
+                                value={analisisActual[field.key]}
+                                onChange={handleAnalisisChange}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Footer modal */}
+            <div className="epf-modal-footer">
+              <button type="button" className="epf-modal-cancel" onClick={cerrarModal}>
+                Cancelar
+              </button>
+              <button type="button" className="epf-modal-save" onClick={guardarAnalisis}>
+                <Plus size={15} aria-hidden="true" /> Guardar análisis
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-// ─── LabGroupPanel ────────────────────────────────────────────────────────────
+// ─── ModalLabField ────────────────────────────────────────────────────────────
 
-function LabGroupPanel({ group, values, onChange }) {
+function ModalLabField({ field, value, onChange }) {
   return (
-    <div
-      className="epf-lab-group"
-      style={{ '--group-color': group.color, '--group-bg': group.bg, '--group-border': group.border }}
-    >
-      <div className="epf-lab-group__header">
-        <div className="epf-lab-group__dot" />
-        <span className="epf-lab-group__label">{group.label}</span>
-      </div>
-      <div className="epf-lab-group__fields">
-        {group.fields.map((field) => (
-          <LabField
-            key={field.key}
-            field={field}
-            value={values[field.key]}
-            onChange={onChange}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ─── LabField ─────────────────────────────────────────────────────────────────
-
-function LabField({ field, value, onChange }) {
-  return (
-    <div className="epf-lab-field">
-      <label className="epf-lab-field__label" htmlFor={`lab-${field.key}`}>
+    <div className="epf-modal-lab-field">
+      <label className="epf-modal-lab-field__label" htmlFor={`an-${field.key}`}>
         {field.label}
       </label>
       <div className="epf-lab-field__input-row">
         <input
-          id={`lab-${field.key}`}
+          id={`an-${field.key}`}
           name={field.key}
           type="number"
           min="0"
@@ -641,9 +910,9 @@ function ColHeader({ icon, title, subtitle }) {
   )
 }
 
-// ─── LabSection ──────────────────────────────────────────────────────────────
+// ─── Section ──────────────────────────────────────────────────────────────────
 
-function LabSection({ label, children }) {
+function Section({ label, children }) {
   return (
     <fieldset className="epf-section">
       <legend className="epf-section__legend">{label}</legend>
@@ -652,7 +921,7 @@ function LabSection({ label, children }) {
   )
 }
 
-// ─── BaseField ───────────────────────────────────────────────────────────────
+// ─── BaseField ────────────────────────────────────────────────────────────────
 
 function BaseField({ id, name, label, tag = 'input', error, ...rest }) {
   const Tag = tag
@@ -672,9 +941,7 @@ function BaseField({ id, name, label, tag = 'input', error, ...rest }) {
         {...rest}
       />
       {error && (
-        <span id={`${id}-err`} className="epf-field-error" role="alert">
-          {error}
-        </span>
+        <span id={`${id}-err`} className="epf-field-error" role="alert">{error}</span>
       )}
     </div>
   )
@@ -685,14 +952,12 @@ function BaseField({ id, name, label, tag = 'input', error, ...rest }) {
 function SyncChip({ sincronizado, pendiente, error, savePhase }) {
   if (savePhase === 'saving') return (
     <span className="epf-sync-chip epf-sync-chip--saving">
-      <Loader2 size={11} className="epf-spin" />
-      Guardando…
+      <Loader2 size={11} className="epf-spin" /> Guardando…
     </span>
   )
   if (savePhase === 'saved' && !error && !pendiente) return (
     <span className="epf-sync-chip epf-sync-chip--saved">
-      <CheckCircle2 size={11} />
-      Guardado
+      <CheckCircle2 size={11} /> Guardado
     </span>
   )
   if (error > 0)     return <span className="epf-sync-chip epf-sync-chip--error">⚠ Error de sync</span>
