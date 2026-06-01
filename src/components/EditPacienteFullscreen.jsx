@@ -123,6 +123,7 @@ const ANALISIS_VACIO = () => ({
   globulosBlancos:     '',
   // Tiroideo
   tsh:                 '',
+  t3:                  '',
   t4Libre:             '',
 })
 
@@ -183,6 +184,7 @@ const ANALISIS_GROUPS = [
     bg: '#EEF2FF', border: '#C7D2FE',
     fields: [
       { key: 'tsh',    label: 'TSH',      unit: 'mUI/L', ref: '0.4–4.0', step: '0.01' },
+      { key: 't3',     label: 'T3 Libre', unit: 'pg/mL', ref: '2.3–4.2', step: '0.01' },
       { key: 't4Libre',label: 'T4 Libre', unit: 'ng/dL', ref: '0.8–1.8', step: '0.01' },
     ],
   },
@@ -241,6 +243,18 @@ function fmtFecha(iso) {
   if (!iso) return '—'
   const [y, m, d] = iso.split('-')
   return `${d}/${m}/${y}`
+}
+
+function calcEdad(fechaNacimiento) {
+  if (!fechaNacimiento) return null
+  const hoy = new Date()
+  const nac = new Date(fechaNacimiento)
+  let edad = hoy.getFullYear() - nac.getFullYear()
+  if (
+    hoy.getMonth() < nac.getMonth() ||
+    (hoy.getMonth() === nac.getMonth() && hoy.getDate() < nac.getDate())
+  ) edad--
+  return edad >= 0 && edad < 150 ? edad : null
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -312,6 +326,7 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
   const sincronizado = pacienteDB?.sincronizado === 1
   const imc          = calcIMC(base.peso, base.altura)
   const imcInfo      = imcLabel(imc)
+  const edad         = calcEdad(base.fechaNacimiento)
 
   // ── Handlers formulario base ───────────────────────────────────────────────
   const handleBaseChange = useCallback((e) => {
@@ -418,10 +433,11 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
       await outbox.registrarSync()
       dispatchSave({ type: 'SAVED', id: pacienteId })
       onSaved?.({ id: pacienteId, ...payload })
+      setTimeout(() => onClose?.(), 1400)
     } catch (err) {
       dispatchSave({ type: 'ERROR', message: err?.message ?? 'Error desconocido' })
     }
-  }, [base, evoluciones, analisisMedicos, pacienteDB, pacienteId, onSaved])
+  }, [base, evoluciones, analisisMedicos, pacienteDB, pacienteId, onSaved, onClose])
 
   // ── Scroll del body y tecla Escape ────────────────────────────────────────
   useEffect(() => {
@@ -531,6 +547,12 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
                 </select>
               </div>
             </div>
+            {edad !== null && (
+              <div className="epf-age-inline">
+                <span aria-hidden="true">🎂</span>
+                <span><strong>{edad}</strong> años</span>
+              </div>
+            )}
             <div className="epf-grid epf-grid--2">
               <BaseField id="peso" name="peso" label="Peso inicio (kg)" type="number"
                 min="0" max="500" step="0.1" inputMode="decimal" placeholder="70"
@@ -542,19 +564,22 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
 
             {imc && (
               <div className="epf-imc-badge">
-                <div className="epf-imc-badge__icon" aria-hidden="true">⚖️</div>
-                <div className="epf-imc-badge__data">
-                  <span className="epf-imc-badge__label">IMC calculado</span>
-                  <span className="epf-imc-badge__value">{imc} kg/m²</span>
+                <div className="epf-imc-badge__row">
+                  <div className="epf-imc-badge__icon" aria-hidden="true">⚖️</div>
+                  <div className="epf-imc-badge__data">
+                    <span className="epf-imc-badge__label">IMC calculado</span>
+                    <span className="epf-imc-badge__value">{imc} kg/m²</span>
+                  </div>
+                  {imcInfo && (
+                    <span
+                      className="epf-imc-badge__tag"
+                      style={{ background: imcInfo.color + '18', color: imcInfo.color, borderColor: imcInfo.color + '40' }}
+                    >
+                      {imcInfo.label}
+                    </span>
+                  )}
                 </div>
-                {imcInfo && (
-                  <span
-                    className="epf-imc-badge__tag"
-                    style={{ background: imcInfo.color + '18', color: imcInfo.color, borderColor: imcInfo.color + '40' }}
-                  >
-                    {imcInfo.label}
-                  </span>
-                )}
+                <ImcMeter imc={imc} />
               </div>
             )}
           </Section>
@@ -863,6 +888,27 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── ImcMeter ─────────────────────────────────────────────────────────────────
+
+function ImcMeter({ imc }) {
+  const MIN = 14, MAX = 40
+  const pct = Math.min(100, Math.max(0, ((Number(imc) - MIN) / (MAX - MIN)) * 100))
+  return (
+    <div className="epf-imc-meter" aria-hidden="true">
+      <div className="epf-imc-meter__track">
+        <div className="epf-imc-meter__cursor" style={{ left: `${pct.toFixed(1)}%` }} />
+      </div>
+      <div className="epf-imc-meter__labels">
+        <span>14</span>
+        <span>18.5</span>
+        <span>25</span>
+        <span>30</span>
+        <span>40</span>
+      </div>
     </div>
   )
 }
