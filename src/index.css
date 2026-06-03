@@ -239,6 +239,11 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.4; }
@@ -2227,6 +2232,140 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   NUEVO PACIENTE — Vista de página completa (reemplaza al drawer lateral)
+   Ocupa todo el espacio disponible bajo la barra de navegación.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pac-new-page {
+  width: 100%;
+  min-height: calc(100vh - 4.5rem);
+  background: var(--color-surface);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  animation: fade-in var(--transition-normal) both;
+}
+
+@media (min-width: 768px) {
+  .pac-new-page { padding: var(--space-8); }
+}
+
+.pac-new-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.pac-new-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--texto-suave);
+  width: fit-content;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color     var(--transition-fast),
+    transform var(--transition-fast);
+}
+.pac-new-page__back:hover {
+  color: var(--color-durazno-dark);
+  transform: translateX(-3px);
+}
+
+.pac-new-page__title-area {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.pac-new-page__accent-bar {
+  width: 4px;
+  min-height: 48px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--color-durazno) 0%, var(--color-durazno-dark) 100%);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.pac-new-page__title {
+  font-size: var(--text-3xl);
+  font-weight: 800;
+  color: var(--texto-principal);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.pac-new-page__subtitle {
+  font-size: var(--text-sm);
+  color: var(--texto-muy-suave);
+  margin-top: 4px;
+}
+
+.pac-new-page__rule {
+  height: 3px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg,
+    var(--color-durazno-dark)  0%,
+    var(--color-durazno-deep)  35%,
+    var(--color-durazno)       60%,
+    var(--color-amarillo-deep) 80%,
+    transparent                100%);
+}
+
+.pac-new-page__body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── PacienteForm expandido en la vista de página completa ── */
+
+.pac-new-page .pf-wrapper {
+  max-width: 100%;
+  padding: 0;
+  padding-bottom: var(--space-8);
+  animation: none;
+}
+
+.pac-new-page .pf-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (min-width: 860px) {
+  .pac-new-page .pf-form {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .pac-new-page .pf-form {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Error global y footer siempre en fila completa */
+.pac-new-page .pf-error-global,
+.pac-new-page .pf-footer {
+  grid-column: 1 / -1;
+}
+
+.pac-new-page .pf-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-divider);
+  padding-top: var(--space-4);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+  margin-top: var(--space-2);
+  z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    EDIT PACIENTE FULLSCREEN (epf-*)
    Historia Clínica completa — overlay pantalla entera, dos columnas.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -3157,32 +3296,26 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
    ═══════════════════════════════════════════════════════════════════════ */
 
 .epf-modal-backdrop {
-  position: fixed;
+  /* Posicionado dentro del stacking context del epf-overlay (position: fixed crea SC) */
+  position: absolute;
   inset: 0;
-  z-index: 400;
-  background: rgba(0,0,0,0.45);
-  backdrop-filter: blur(6px) saturate(0.8);
-  -webkit-backdrop-filter: blur(6px) saturate(0.8);
+  z-index: 2;
+  background: var(--color-surface-raised);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
+  flex-direction: column;
   animation: fade-in 180ms both;
 }
 
 .epf-modal {
-  width: min(760px, 100%);
-  max-height: calc(100dvh - 64px);
+  width: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-surface);
-  border-radius: var(--radius-xl);
-  box-shadow:
-    0 24px 60px rgba(0,0,0,0.28),
-    0 8px  24px rgba(0,0,0,0.16),
-    0 0    0 1px rgba(255,255,255,0.06);
+  border-radius: 0;
   overflow: hidden;
-  animation: slide-down 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: slide-up 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* Header del modal */
@@ -3252,6 +3385,10 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* Limitar ancho de contenido para legibilidad en pantallas muy anchas */
+  max-width: 1080px;
+  width: 100%;
+  margin-inline: auto;
 }
 
 /* Campos obligatorios */
@@ -3280,6 +3417,12 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
+}
+
+@media (min-width: 900px) {
+  .epf-modal-req__grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 /* Accordion */
@@ -3358,6 +3501,18 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-3);
   padding: var(--space-4);
+}
+
+@media (min-width: 900px) {
+  .epf-accordion-fields {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .epf-accordion-fields {
+    grid-template-columns: repeat(7, 1fr);
+  }
 }
 
 /* Campo en modal */
@@ -3473,7 +3628,7 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   .epf-col { padding: var(--space-4); }
   .epf-grid--2 { grid-template-columns: 1fr; }
   .epf-evo-add__grid { grid-template-columns: 1fr; }
-  .epf-modal-backdrop { padding: var(--space-2); }
+  .epf-modal-backdrop { padding: 0; }
   .epf-accordion-fields { grid-template-columns: 1fr; }
 }
 

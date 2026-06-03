@@ -3,14 +3,13 @@
  *
  * Arquitectura:
  *   - Lista reactiva: Dexie liveQuery + useSyncExternalStore (sin polling, sin React Query)
- *   - Drawer cinemático: translate3d(100%,0,0) ↔ translate3d(0,0,0) acelerado por GPU
- *   - Backdrop con backdrop-filter: blur(8px)
+ *   - Nuevo paciente: vista de página completa (sin drawer/modal), renderizado en flujo
+ *   - Edición: EditPacienteFullscreen overlay deslizante (sin cambios)
  *   - FAB flotante con degradado + micro-pulso (keyframes CSS)
- *   - PacienteForm integrado dentro del panel
- *   - Al guardar: drawer cierra con transición + lista actualiza desde IndexedDB
  *
  * Gestión de memoria:
- *   - PacienteForm se monta solo cuando el drawer está visible y se desmonta
+ *   - PacienteForm se monta/desmonta al cambiar `view` — sin timers de animación.
+ *   - EditPacienteFullscreen se monta solo en modo edición y se desmonta
  *     400ms después del cierre (al completar la animación de salida).
  *   - Un solo observer liveQuery para toda la lista — sin re-creación en renders.
  */
@@ -60,46 +59,71 @@ const OBJETIVO_LABELS = {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function Pacientes() {
-  // ── Estado del drawer ──
-  // `drawerOpen`    → controla la clase CSS que dispara la transición
-  // `drawerMounted` → controla si el formulario está en el DOM
-  // `editId`        → null = nuevo paciente | string = editar existente
-  const [drawerOpen,    setDrawerOpen]    = useState(false)
-  const [drawerMounted, setDrawerMounted] = useState(false)
-  const [editId,        setEditId]        = useState(null)
+  // `view`        → 'list' | 'new' (nuevo paciente como página completa, sin modal)
+  // `editId`      → UUID del paciente en edición, null cuando no hay edición activa
+  // `editOpen`    → dispara la transición CSS de entrada/salida del overlay de edición
+  // `editMounted` → mantiene el overlay en el DOM durante la animación de salida
+  const [view,        setView]        = useState('list')
+  const [editId,      setEditId]      = useState(null)
+  const [editOpen,    setEditOpen]    = useState(false)
+  const [editMounted, setEditMounted] = useState(false)
   const closeTimerRef = useRef(null)
 
-  const pacientes      = usePacientesLive()
-  const setPacienteId  = useUIStore((s) => s.setPacienteId)
+  const pacientes     = usePacientesLive()
+  const setPacienteId = useUIStore((s) => s.setPacienteId)
 
-  // Limpieza del timer al desmontar
   useEffect(() => () => clearTimeout(closeTimerRef.current), [])
 
-  // ── Apertura del drawer ──
-  // Cuando se selecciona un paciente existente, actualiza el pacienteId global
-  // para que Planes y Reportes carguen sus datos inmediatamente.
-  const abrirDrawer = useCallback((id = null) => {
+  // ── Abrir edición de paciente existente ──
+  const abrirEdicion = useCallback((id) => {
     clearTimeout(closeTimerRef.current)
-    if (id) setPacienteId(id)   // ← propaga la selección globalmente
+    setPacienteId(id)
     setEditId(id)
-    setDrawerMounted(true)
-    // Esperar un frame para que el DOM monte antes de disparar la transición CSS
-    requestAnimationFrame(() => setDrawerOpen(true))
+    setEditMounted(true)
+    requestAnimationFrame(() => setEditOpen(true))
   }, [setPacienteId])
 
-  // ── Cierre con animación ──
-  const cerrarDrawer = useCallback(() => {
-    setDrawerOpen(false) // quita --open → transición de salida inicia
+  // ── Cerrar edición con animación de salida ──
+  const cerrarEdicion = useCallback(() => {
+    setEditOpen(false)
     clearTimeout(closeTimerRef.current)
     closeTimerRef.current = setTimeout(() => {
-      setDrawerMounted(false)
+      setEditMounted(false)
       setEditId(null)
-    }, 400) // igual a la duración de la transición CSS del drawer
+    }, 400)
   }, [])
 
-  const handleSaved = useCallback(() => cerrarDrawer(), [cerrarDrawer])
+  // ── Vista: formulario de nuevo paciente (página completa, sin overlay) ──────
+  if (view === 'new') {
+    return (
+      <main className="pac-new-page">
+        <header className="pac-new-page__header">
+          <button
+            type="button"
+            className="pac-new-page__back"
+            onClick={() => setView('list')}
+            aria-label="Volver a la lista de pacientes"
+          >
+            <IconChevronLeft aria-hidden="true" />
+            <span>Volver a Mis Pacientes</span>
+          </button>
+          <div className="pac-new-page__title-area">
+            <div className="pac-new-page__accent-bar" aria-hidden="true" />
+            <div>
+              <h1 className="pac-new-page__title">Nuevo Paciente</h1>
+              <p className="pac-new-page__subtitle">Completá los datos para crear la ficha clínica</p>
+            </div>
+          </div>
+        </header>
+        <div className="pac-new-page__rule" aria-hidden="true" />
+        <div className="pac-new-page__body">
+          <PacienteForm onSaved={() => setView('list')} />
+        </div>
+      </main>
+    )
+  }
 
-  // ── Render ──
+  // ── Vista: lista de pacientes ────────────────────────────────────────────────
   return (
     <main className="pac-page">
 
@@ -129,19 +153,16 @@ export default function Pacientes() {
             <PacienteCard
               key={p.id}
               paciente={p}
-              onClick={() => abrirDrawer(p.id)}
+              onClick={() => abrirEdicion(p.id)}
             />
           ))}
         </ul>
       )}
 
-      {/* ── FAB: Registrar Nuevo Paciente ────────────────────────────────────
-          Degradado verde + micro-pulso en box-shadow (GPU only, sin layout).
-          Se oculta cuando el drawer está abierto para no confundir al usuario.
-          ─────────────────────────────────────────────────────────────────── */}
+      {/* ── FAB: Registrar Nuevo Paciente ── */}
       <button
-        className={`pac-fab${drawerOpen ? ' pac-fab--hidden' : ''}`}
-        onClick={() => abrirDrawer()}
+        className="pac-fab"
+        onClick={() => setView('new')}
         aria-label="Registrar nuevo paciente"
         type="button"
       >
@@ -149,74 +170,16 @@ export default function Pacientes() {
         <span>+ Registrar Nuevo Paciente</span>
       </button>
 
-      {/* ── Editor pantalla completa — solo en modo edición ──────────────────
-          Se monta cuando drawerMounted && editId != null.
-          La animación de entrada/salida la controla isOpen.
-          ─────────────────────────────────────────────────────────────────── */}
-      {drawerMounted && editId && (
+      {/* ── Editor pantalla completa — solo en modo edición ── */}
+      {editMounted && editId && (
         <EditPacienteFullscreen
           key={editId}
           pacienteId={editId}
-          isOpen={drawerOpen}
-          onClose={cerrarDrawer}
-          onSaved={handleSaved}
+          isOpen={editOpen}
+          onClose={cerrarEdicion}
+          onSaved={cerrarEdicion}
         />
       )}
-
-      {/* ── Backdrop: overlay con desenfoque — solo para nuevo paciente ──────
-          pointer-events controlados por la clase --open en CSS.
-          ─────────────────────────────────────────────────────────────────── */}
-      {!editId && (
-        <div
-          className={`pac-backdrop${drawerOpen ? ' pac-backdrop--open' : ''}`}
-          onClick={cerrarDrawer}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* ── Drawer lateral — solo para nuevo paciente ────────────────────────
-          Siempre en el DOM (position: fixed, off-screen cuando cerrado).
-          inert previene foco/interacción cuando está cerrado.
-          ─────────────────────────────────────────────────────────────────── */}
-      <aside
-        className={`pac-drawer${drawerOpen && !editId ? ' pac-drawer--open' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Registrar nuevo paciente"
-        {...(!(drawerOpen && !editId) ? { inert: '' } : {})}
-      >
-        {/* Encabezado del panel */}
-        <div className="pac-drawer__header">
-          <div className="pac-drawer__header-left">
-            <div className="pac-drawer__accent-bar" aria-hidden="true" />
-            <div>
-              <h2 className="pac-drawer__title">Nuevo Paciente</h2>
-              <p className="pac-drawer__subtitle">Completá los datos para crear la ficha</p>
-            </div>
-          </div>
-          <button
-            className="pac-drawer__close"
-            onClick={cerrarDrawer}
-            aria-label="Cerrar panel"
-            type="button"
-          >
-            <IconX aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Línea de acento degradada bajo el header */}
-        <div className="pac-drawer__rule" aria-hidden="true" />
-
-        {/* Cuerpo desplazable — formulario de creación */}
-        <div className="pac-drawer__body">
-          {drawerMounted && !editId && (
-            <PacienteForm
-              key="new"
-              onSaved={handleSaved}
-            />
-          )}
-        </div>
-      </aside>
     </main>
   )
 }
@@ -321,12 +284,11 @@ function IconUserPlus() {
   )
 }
 
-function IconX() {
+function IconChevronLeft() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-      <line x1="18" y1="6"  x2="6"  y2="18" />
-      <line x1="6"  y1="6"  x2="18" y2="18" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6" />
     </svg>
   )
 }

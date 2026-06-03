@@ -1,4 +1,4 @@
-import{r as h,u as $,j as a,l as I,d as j}from"./index-Bi0ZlRrb.js";import{c as D,p as F}from"./costos-V0IoYBoe.js";const P=`
+import{r as h,u as $,j as a,l as I,d as j}from"./index-CHthNYrd.js";import{c as D,p as F}from"./costos-V0IoYBoe.js";const P=`
 /* ══ Wrapper ═══════════════════════════════════════════════════════════════ */
 .adash {
   max-width: 1060px;
