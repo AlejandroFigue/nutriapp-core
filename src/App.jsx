@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import OfflineBanner from '@/components/OfflineBanner'
-import SyncStatus    from '@/components/SyncStatus'
-import AgenteIA      from '@/components/AgenteIA'
-import { useUIStore } from '@/store/useUIStore'
+import OfflineBanner        from '@/components/OfflineBanner'
+import ActivePatientBanner from '@/components/ActivePatientBanner'
+import SyncStatus          from '@/components/SyncStatus'
+import AgenteIA            from '@/components/AgenteIA'
+import { useUIStore }      from '@/store/useUIStore'
 
 // ─── Rutas (lazy) ─────────────────────────────────────────────────────────────
 
@@ -104,6 +105,9 @@ export default function App() {
       )}
 
       <OfflineBanner />
+
+      {/* Indicador de sesión activa — visible en toda la app cuando hay paciente seleccionado */}
+      <ActivePatientBanner />
 
       {/* ── Asistente Inteligente — global, no intrusivo ── */}
       <AgenteIA />
