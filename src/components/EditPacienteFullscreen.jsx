@@ -507,7 +507,7 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
       <div className="epf-header__rule" aria-hidden="true" />
 
       {/* ── CUERPO: 1/3 + 2/3 ─────────────────────────────────────────────── */}
-      <form id="epf-form" onSubmit={handleSubmit} noValidate className="epf-body">
+      <form id="epf-form" onSubmit={handleSubmit} noValidate className={`epf-body${modalOpen ? ' epf-body--with-analisis' : ''}`}>
 
         {/* ── COLUMNA IZQUIERDA — Datos del paciente (1/3) ─────────────────── */}
         <div className="epf-col epf-col--left">
@@ -754,38 +754,38 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
 
           {/* ── Botón premium análisis médicos (sticky pie) ─────────────────── */}
           <div className="epf-evo-footer">
-            <button type="button" className="epf-analysis-btn" onClick={abrirModal}>
+            <button type="button" className="epf-analysis-btn" onClick={modalOpen ? cerrarModal : abrirModal}>
               <span className="epf-analysis-btn__icon" aria-hidden="true">
                 <FlaskConical size={18} strokeWidth={2} />
               </span>
               <span className="epf-analysis-btn__content">
-                <span className="epf-analysis-btn__label">Agregar análisis médicos</span>
+                <span className="epf-analysis-btn__label">
+                  {modalOpen ? 'Cerrar panel de análisis' : 'Agregar análisis médicos'}
+                </span>
                 <span className="epf-analysis-btn__sub">
                   Laboratorio · fecha · valores clínicos
                 </span>
               </span>
-              <span className="epf-analysis-btn__arrow" aria-hidden="true">→</span>
+              <span className="epf-analysis-btn__arrow" aria-hidden="true">{modalOpen ? '✕' : '→'}</span>
             </button>
           </div>
         </div>
-      </form>
 
-      {/* ── MODAL ANÁLISIS MÉDICOS ────────────────────────────────────────────── */}
-      {modalOpen && (
-        <div className="epf-modal-backdrop" role="dialog" aria-modal="true" aria-label="Agregar análisis médicos">
-          <div className="epf-modal">
-            {/* Header modal */}
+        {/* ── COLUMNA DERECHA — Panel Análisis Médicos (workspace inline) ──────── */}
+        {modalOpen && (
+          <div className="epf-col epf-col--right">
+            {/* Header panel */}
             <div className="epf-modal-header">
               <div className="epf-modal-header__left">
                 <span className="epf-modal-header__icon" aria-hidden="true">
                   <FlaskConical size={20} />
                 </span>
                 <div>
-                  <h3 className="epf-modal-header__title">Agregar análisis médicos</h3>
+                  <h3 className="epf-modal-header__title">Análisis médicos</h3>
                   <p className="epf-modal-header__sub">Completá los valores del laboratorio</p>
                 </div>
               </div>
-              <button type="button" className="epf-close-btn" onClick={cerrarModal} aria-label="Cerrar modal">
+              <button type="button" className="epf-close-btn" onClick={cerrarModal} aria-label="Cerrar panel de análisis">
                 <X size={18} />
               </button>
             </div>
@@ -876,7 +876,7 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
               </div>
             </div>
 
-            {/* Footer modal */}
+            {/* Footer panel */}
             <div className="epf-modal-footer">
               <button type="button" className="epf-modal-cancel" onClick={cerrarModal}>
                 Cancelar
@@ -886,8 +886,8 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </form>
     </div>
   )
 }

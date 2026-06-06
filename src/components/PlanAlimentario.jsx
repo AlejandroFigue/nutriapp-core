@@ -131,10 +131,10 @@ const PD_CSS = `
 .pd {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-height: calc(100vh - var(--nav-h, 72px));
   padding-bottom: calc(var(--nav-h, 72px) + var(--space-8, 32px));
   animation: fade-in var(--transition-normal, 220ms) both;
-  max-width: 780px;
-  margin-inline: auto;
 }
 
 /* ── Sin paciente ─────────────────────────────────────────────────────── */

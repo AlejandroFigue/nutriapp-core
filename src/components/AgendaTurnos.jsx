@@ -30,11 +30,11 @@ import { db, genId, queueSyncTask } from '@/db/database'
 
 const COMPONENT_CSS = `
 
-/* ── Layout raíz ────────────────────────────────────────────────────────── */
+/* ── Layout raíz — workspace de ancho completo ──────────────────────────── */
 .ag {
-  max-width: 960px;
-  margin-inline: auto;
-  padding: var(--space-4);
+  width: 100%;
+  min-height: calc(100vh - var(--nav-h, 72px));
+  padding: var(--space-4) var(--space-6);
   padding-bottom: calc(var(--space-16) + var(--space-6));
   display: grid;
   grid-template-columns: 1fr;
@@ -42,7 +42,10 @@ const COMPONENT_CSS = `
   animation: ag-fade-in var(--transition-normal) both;
 }
 @media (min-width: 720px) {
-  .ag { grid-template-columns: minmax(300px, 380px) 1fr; align-items: start; }
+  .ag { grid-template-columns: minmax(320px, 440px) 1fr; align-items: start; }
+}
+@media (min-width: 1280px) {
+  .ag { grid-template-columns: minmax(360px, 480px) 1fr; padding-inline: var(--space-8); }
 }
 
 /* ── Calendario: panel flotante multi-capa ──────────────────────────────── */

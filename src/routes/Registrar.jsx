@@ -80,70 +80,78 @@ export default function Registrar() {
   }
 
   return (
-    <main style={{ padding: 'var(--space-4)', maxWidth: '480px', margin: '0 auto' }}>
+    <main style={{ padding: 'var(--space-4) var(--space-6)', width: '100%', minHeight: 'calc(100vh - var(--nav-h, 72px))' }}>
       <header style={{ marginBottom: 'var(--space-6)' }}>
         <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 700 }}>
           Registrar Comida
         </h1>
       </header>
 
-      <form onSubmit={handleSubmit} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <form onSubmit={handleSubmit} noValidate style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-6)', alignItems: 'start' }}>
 
-        <div style={fieldStyle}>
-          <label htmlFor="tipoComida" style={labelStyle}>Tipo de comida</label>
-          <select id="tipoComida" name="tipoComida" value={form.tipoComida} onChange={handleChange} style={inputStyle}>
-            {TIPOS_COMIDA.map((t) => (
-              <option key={t} value={t} style={{ textTransform: 'capitalize' }}>{t}</option>
-            ))}
-          </select>
-        </div>
+        {/* Columna 1 — Identificación del alimento */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', background: 'var(--color-surface)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-5)', boxShadow: 'var(--shadow-sm)' }}>
+          <p style={{ fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--color-primary)' }}>
+            Identificación
+          </p>
 
-        <div style={fieldStyle}>
-          <label htmlFor="nombreAlimento" style={labelStyle}>Nombre del alimento *</label>
-          <input
-            id="nombreAlimento"
-            name="nombreAlimento"
-            type="text"
-            value={form.nombreAlimento}
-            onChange={handleChange}
-            placeholder="Ej: Pechuga de pollo"
-            autoComplete="off"
-            required
-            style={inputStyle}
-          />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-3)' }}>
           <div style={fieldStyle}>
-            <label htmlFor="cantidad" style={labelStyle}>Cantidad *</label>
+            <label htmlFor="tipoComida" style={labelStyle}>Tipo de comida</label>
+            <select id="tipoComida" name="tipoComida" value={form.tipoComida} onChange={handleChange} style={inputStyle}>
+              {TIPOS_COMIDA.map((t) => (
+                <option key={t} value={t} style={{ textTransform: 'capitalize' }}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={fieldStyle}>
+            <label htmlFor="nombreAlimento" style={labelStyle}>Nombre del alimento *</label>
             <input
-              id="cantidad"
-              name="cantidad"
-              type="number"
-              min="0"
-              step="0.1"
-              value={form.cantidad}
+              id="nombreAlimento"
+              name="nombreAlimento"
+              type="text"
+              value={form.nombreAlimento}
               onChange={handleChange}
-              placeholder="150"
+              placeholder="Ej: Pechuga de pollo"
+              autoComplete="off"
               required
               style={inputStyle}
             />
           </div>
-          <div style={fieldStyle}>
-            <label htmlFor="unidad" style={labelStyle}>Unidad</label>
-            <select id="unidad" name="unidad" value={form.unidad} onChange={handleChange} style={inputStyle}>
-              <option value="g">g</option>
-              <option value="ml">ml</option>
-              <option value="unidad">unidad</option>
-            </select>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-3)' }}>
+            <div style={fieldStyle}>
+              <label htmlFor="cantidad" style={labelStyle}>Cantidad *</label>
+              <input
+                id="cantidad"
+                name="cantidad"
+                type="number"
+                min="0"
+                step="0.1"
+                value={form.cantidad}
+                onChange={handleChange}
+                placeholder="150"
+                required
+                style={inputStyle}
+              />
+            </div>
+            <div style={fieldStyle}>
+              <label htmlFor="unidad" style={labelStyle}>Unidad</label>
+              <select id="unidad" name="unidad" value={form.unidad} onChange={handleChange} style={inputStyle}>
+                <option value="g">g</option>
+                <option value="ml">ml</option>
+                <option value="unidad">unidad</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <fieldset style={{ border: 'none', padding: 0 }}>
-          <legend style={{ ...labelStyle, marginBottom: 'var(--space-3)', display: 'block' }}>
-            Información nutricional (por cantidad ingresada)
+        {/* Columna 2 — Información nutricional */}
+        <fieldset style={{ border: 'none', padding: 0, background: 'var(--color-surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}>
+          <legend style={{ display: 'block', padding: 'var(--space-5) var(--space-5) 0', fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--color-primary)', marginBottom: 'var(--space-4)' }}>
+            Información nutricional
           </legend>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)', padding: '0 var(--space-5) var(--space-5)' }}>
             {[
               { name: 'calorias', label: 'Calorías (kcal)' },
               { name: 'proteinas', label: 'Proteínas (g)' },
@@ -168,28 +176,32 @@ export default function Registrar() {
           </div>
         </fieldset>
 
-        {error && (
-          <p role="alert" style={{ color: 'var(--color-error)', fontSize: 'var(--text-sm)' }}>
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={guardando}
-          style={{
-            padding: 'var(--space-4)',
-            background: 'var(--color-primary)',
-            color: 'var(--color-primary-on)',
-            borderRadius: 'var(--radius-md)',
-            fontWeight: 600,
-            fontSize: 'var(--text-base)',
-            opacity: guardando ? 0.7 : 1,
-            transition: 'opacity var(--transition-fast)',
-          }}
-        >
-          {guardando ? 'Guardando…' : 'Guardar registro'}
-        </button>
+        {/* Footer — ancho completo */}
+        <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          {error && (
+            <p role="alert" style={{ color: 'var(--color-error)', fontSize: 'var(--text-sm)' }}>
+              {error}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={guardando}
+            style={{
+              padding: 'var(--space-4)',
+              background: 'var(--color-primary)',
+              color: 'var(--color-primary-on)',
+              borderRadius: 'var(--radius-md)',
+              fontWeight: 600,
+              fontSize: 'var(--text-base)',
+              opacity: guardando ? 0.7 : 1,
+              transition: 'opacity var(--transition-fast)',
+              alignSelf: 'flex-start',
+              minWidth: '200px',
+            }}
+          >
+            {guardando ? 'Guardando…' : 'Guardar registro'}
+          </button>
+        </div>
       </form>
     </main>
   )
