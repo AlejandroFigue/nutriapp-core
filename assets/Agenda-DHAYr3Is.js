@@ -1,10 +1,10 @@
-import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-CHthNYrd.js";const Q=`
+import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-D4__-TOU.js";const Q=`
 
-/* ── Layout raíz ────────────────────────────────────────────────────────── */
+/* ── Layout raíz — workspace de ancho completo ──────────────────────────── */
 .ag {
-  max-width: 960px;
-  margin-inline: auto;
-  padding: var(--space-4);
+  width: 100%;
+  min-height: calc(100vh - var(--nav-h, 72px));
+  padding: var(--space-4) var(--space-6);
   padding-bottom: calc(var(--space-16) + var(--space-6));
   display: grid;
   grid-template-columns: 1fr;
@@ -12,7 +12,10 @@ import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-CHthNYrd.js";const
   animation: ag-fade-in var(--transition-normal) both;
 }
 @media (min-width: 720px) {
-  .ag { grid-template-columns: minmax(300px, 380px) 1fr; align-items: start; }
+  .ag { grid-template-columns: minmax(320px, 440px) 1fr; align-items: start; }
+}
+@media (min-width: 1280px) {
+  .ag { grid-template-columns: minmax(360px, 480px) 1fr; padding-inline: var(--space-8); }
 }
 
 /* ── Calendario: panel flotante multi-capa ──────────────────────────────── */
