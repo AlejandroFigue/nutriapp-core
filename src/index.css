@@ -1820,9 +1820,17 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   gap: var(--space-2);
 }
 
-/* ── Tarjeta de paciente ── */
+/* ── Fila de tarjeta: selección + botón editar ── */
+.pac-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Tarjeta de paciente (área de selección) ── */
 .pac-card {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1927,17 +1935,43 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-.pac-card__chevron {
-  color: var(--color-text-disabled);
-  flex-shrink: 0;
-  transition:
-    transform var(--transition-fast),
-    color     var(--transition-fast);
+/* ── Estado seleccionado ── */
+.pac-card--selected {
+  border-color: var(--color-durazno);
+  box-shadow: 0 0 0 2px rgba(232, 149, 106, 0.20), var(--shadow-sm);
 }
 
-.pac-card:hover .pac-card__chevron {
-  transform: translateX(3px);
-  color: var(--color-durazno-deep);
+/* ── Botón de edición explícito ── */
+.pac-card__edit-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-low);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color var(--transition-fast),
+    color        var(--transition-fast),
+    background   var(--transition-fast),
+    transform    var(--transition-fast);
+}
+
+.pac-card__edit-btn:hover {
+  border-color: var(--color-durazno);
+  color: var(--color-durazno);
+  background: rgba(232, 149, 106, 0.06);
+}
+
+.pac-card__edit-btn:active {
+  transform: scale(0.97);
 }
 
 /* ── Estado vacío ── */
@@ -2370,26 +2404,21 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
    Historia Clínica completa — overlay pantalla entera, dos columnas.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Overlay raíz ──────────────────────────────────────────────────────── */
-.epf-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  background: var(--color-surface-raised);
+/* ── Workspace raíz — espacio de trabajo plano, sin overlay ───────────── */
+.epf-workspace {
+  width: 100%;
+  background: var(--color-bg);
   display: flex;
   flex-direction: column;
-  /* Entrada: desliza desde abajo */
-  transform: translateY(100%);
-  opacity: 0;
-  transition:
-    transform 320ms cubic-bezier(0.32, 0.72, 0, 1),
-    opacity   200ms ease;
-  will-change: transform, opacity;
+  min-height: calc(100vh - 4.5rem);
 }
 
-.epf-overlay--open {
-  transform: translateY(0);
-  opacity: 1;
+@media (min-width: 901px) {
+  .epf-workspace {
+    height: calc(100vh - 4.5rem);
+    min-height: unset;
+    overflow: hidden;
+  }
 }
 
 /* ── HEADER ────────────────────────────────────────────────────────────── */
@@ -3606,11 +3635,6 @@ p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
 
 /* Una sola columna: el overlay hace el scroll — navegación natural */
 @media (max-width: 900px) {
-  /* El overlay scrollea como una página completa */
-  .epf-overlay {
-    overflow-y: auto;
-  }
-
   /* El cuerpo fluye a altura natural (sin clipping) */
   .epf-body {
     grid-template-columns: 1fr;

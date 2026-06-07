@@ -4,13 +4,12 @@
  * Arquitectura:
  *   - Lista reactiva: Dexie liveQuery + useSyncExternalStore (sin polling, sin React Query)
  *   - Nuevo paciente: vista de página completa (sin drawer/modal), renderizado en flujo
- *   - Edición: EditPacienteFullscreen overlay deslizante (sin cambios)
+ *   - Edición: EditPacienteFullscreen como espacio de trabajo plano, sin overlay
  *   - FAB flotante con degradado + micro-pulso (keyframes CSS)
  *
- * Gestión de memoria:
- *   - PacienteForm se monta/desmonta al cambiar `view` — sin timers de animación.
- *   - EditPacienteFullscreen se monta solo en modo edición y se desmonta
- *     400ms después del cierre (al completar la animación de salida).
+ * Gestión de estado (view: 'list' | 'new' | 'edit'):
+ *   - Clic en tarjeta → selecciona el paciente activo en UIStore (sin abrir editor)
+ *   - Clic en "Editar Ficha" → cambia view a 'edit' y monta el editor
  *   - Un solo observer liveQuery para toda la lista — sin re-creación en renders.
  */
 import {
@@ -18,7 +17,6 @@ import {
   useRef,
   useMemo,
   useCallback,
-  useEffect,
   useSyncExternalStore,
 } from 'react'
 import { liveQuery } from 'dexie'
@@ -59,38 +57,33 @@ const OBJETIVO_LABELS = {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function Pacientes() {
-  // `view`        → 'list' | 'new' (nuevo paciente como página completa, sin modal)
-  // `editId`      → UUID del paciente en edición, null cuando no hay edición activa
-  // `editOpen`    → dispara la transición CSS de entrada/salida del overlay de edición
-  // `editMounted` → mantiene el overlay en el DOM durante la animación de salida
-  const [view,        setView]        = useState('list')
-  const [editId,      setEditId]      = useState(null)
-  const [editOpen,    setEditOpen]    = useState(false)
-  const [editMounted, setEditMounted] = useState(false)
-  const closeTimerRef = useRef(null)
+  // `view`       → 'list' | 'new' | 'edit'
+  // `editId`     → UUID del paciente cuya ficha está abierta en el editor
+  // `selectedId` → UUID del paciente activo seleccionado en la lista
+  const [view,       setView]       = useState('list')
+  const [editId,     setEditId]     = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
 
   const pacientes     = usePacientesLive()
   const setPacienteId = useUIStore((s) => s.setPacienteId)
 
-  useEffect(() => () => clearTimeout(closeTimerRef.current), [])
-
-  // ── Abrir edición de paciente existente ──
-  const abrirEdicion = useCallback((id) => {
-    clearTimeout(closeTimerRef.current)
+  // ── Seleccionar paciente activo (sin abrir editor) ──
+  const seleccionarPaciente = useCallback((id) => {
     setPacienteId(id)
-    setEditId(id)
-    setEditMounted(true)
-    requestAnimationFrame(() => setEditOpen(true))
+    setSelectedId(id)
   }, [setPacienteId])
 
-  // ── Cerrar edición con animación de salida ──
+  // ── Abrir editor de ficha clínica ──
+  const abrirEdicion = useCallback((id) => {
+    setPacienteId(id)
+    setEditId(id)
+    setView('edit')
+  }, [setPacienteId])
+
+  // ── Cerrar editor y volver a la lista ──
   const cerrarEdicion = useCallback(() => {
-    setEditOpen(false)
-    clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = setTimeout(() => {
-      setEditMounted(false)
-      setEditId(null)
-    }, 400)
+    setView('list')
+    setEditId(null)
   }, [])
 
   // ── Vista: formulario de nuevo paciente (página completa, sin overlay) ──────
@@ -120,6 +113,17 @@ export default function Pacientes() {
           <PacienteForm onSaved={() => setView('list')} />
         </div>
       </main>
+    )
+  }
+
+  // ── Vista: editor de ficha clínica (espacio de trabajo plano, sin overlay) ──
+  if (view === 'edit' && editId) {
+    return (
+      <EditPacienteFullscreen
+        key={editId}
+        pacienteId={editId}
+        onClose={cerrarEdicion}
+      />
     )
   }
 
@@ -153,7 +157,9 @@ export default function Pacientes() {
             <PacienteCard
               key={p.id}
               paciente={p}
-              onClick={() => abrirEdicion(p.id)}
+              isSelected={p.id === selectedId}
+              onSelect={() => seleccionarPaciente(p.id)}
+              onEdit={() => abrirEdicion(p.id)}
             />
           ))}
         </ul>
@@ -170,23 +176,13 @@ export default function Pacientes() {
         <span>+ Registrar Nuevo Paciente</span>
       </button>
 
-      {/* ── Editor pantalla completa — solo en modo edición ── */}
-      {editMounted && editId && (
-        <EditPacienteFullscreen
-          key={editId}
-          pacienteId={editId}
-          isOpen={editOpen}
-          onClose={cerrarEdicion}
-          onSaved={cerrarEdicion}
-        />
-      )}
     </main>
   )
 }
 
 // ─── Tarjeta de paciente ──────────────────────────────────────────────────────
 
-function PacienteCard({ paciente, onClick }) {
+function PacienteCard({ paciente, isSelected, onSelect, onEdit }) {
   const {
     nombre      = '',
     apellido    = '',
@@ -196,29 +192,23 @@ function PacienteCard({ paciente, onClick }) {
     sincronizado,
   } = paciente
 
-  // Iniciales para el avatar
-  const initials = [nombre[0], apellido?.[0]]
-    .filter(Boolean)
-    .join('')
-    .toUpperCase() || '?'
-
+  const initials    = [nombre[0], apellido?.[0]].filter(Boolean).join('').toUpperCase() || '?'
   const displayName = [nombre, apellido].filter(Boolean).join(' ')
   const metaText    = email || telefono || '—'
 
   return (
-    <li>
+    <li className="pac-card-row">
+      {/* Área de selección: activa el paciente en el SaaS */}
       <button
-        className="pac-card"
-        onClick={onClick}
+        className={`pac-card${isSelected ? ' pac-card--selected' : ''}`}
+        onClick={onSelect}
         type="button"
-        aria-label={`Ver y editar datos de ${displayName}`}
+        aria-label={`Seleccionar paciente ${displayName}`}
+        aria-pressed={isSelected}
       >
-        {/* Avatar con iniciales */}
         <div className="pac-card__avatar" aria-hidden="true">
           {initials}
         </div>
-
-        {/* Info principal */}
         <div className="pac-card__info">
           <div className="pac-card__name">{displayName}</div>
           <div className="pac-card__meta">
@@ -233,8 +223,6 @@ function PacienteCard({ paciente, onClick }) {
             )}
           </div>
         </div>
-
-        {/* Indicador de sync pendiente */}
         {sincronizado !== 1 && (
           <span
             className="pac-card__sync-dot"
@@ -242,11 +230,17 @@ function PacienteCard({ paciente, onClick }) {
             title="Pendiente de sincronización"
           />
         )}
+      </button>
 
-        {/* Chevron derecho */}
-        <div className="pac-card__chevron" aria-hidden="true">
-          <IconChevronRight />
-        </div>
+      {/* Botón explícito de edición — abre la ficha clínica completa */}
+      <button
+        type="button"
+        className="pac-card__edit-btn"
+        onClick={(e) => { e.stopPropagation(); onEdit() }}
+        aria-label={`Editar ficha de ${displayName}`}
+      >
+        <IconPencil aria-hidden="true" />
+        <span>Editar Ficha</span>
       </button>
     </li>
   )
@@ -293,11 +287,12 @@ function IconChevronLeft() {
   )
 }
 
-function IconChevronRight() {
+function IconPencil() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="9 18 15 12 9 6" />
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
     </svg>
   )
 }

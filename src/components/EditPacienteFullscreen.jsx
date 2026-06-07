@@ -259,7 +259,7 @@ function calcEdad(fechaNacimiento) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, onSaved }) {
+export default function EditPacienteFullscreen({ pacienteId, onClose, onSaved }) {
   const pacienteDB = useDexieLive(
     () => db.pacientes.get(pacienteId),
     [pacienteId],
@@ -439,14 +439,7 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
     }
   }, [base, evoluciones, analisisMedicos, pacienteDB, pacienteId, onSaved, onClose])
 
-  // ── Scroll del body y tecla Escape ────────────────────────────────────────
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden'
-      return () => { document.body.style.overflow = '' }
-    }
-  }, [isOpen])
-
+  // ── Tecla Escape: cerrar workspace ────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'Escape') {
@@ -463,10 +456,8 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div
-      className={`epf-overlay${isOpen ? ' epf-overlay--open' : ''}`}
-      role="dialog"
-      aria-modal="true"
+    <main
+      className="epf-workspace"
       aria-label="Edición de Historia Clínica"
     >
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
@@ -888,7 +879,7 @@ export default function EditPacienteFullscreen({ pacienteId, isOpen, onClose, on
           </div>
         )}
       </form>
-    </div>
+    </main>
   )
 }
 
