@@ -1,4 +1,4 @@
-import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-D4__-TOU.js";const Q=`
+import{r as t,d as N,q as S,g as J,j as a,l as X}from"./index-D-RqeLd2.js";const Q=`
 
 /* ── Layout raíz — workspace de ancho completo ──────────────────────────── */
 .ag {
